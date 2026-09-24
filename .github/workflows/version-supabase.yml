@@ -1,12 +1,13 @@
 name: Version Supabase Tables and Model
 on:
-  schedule:
-    - cron: "37 2 * * *"
+  workflow_run:
+    workflows: ["Sync Pulso TransMi to Supabase"]
+    types: [completed]
   workflow_dispatch:
-permissions:
-  contents: read
+
 jobs:
   version:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
