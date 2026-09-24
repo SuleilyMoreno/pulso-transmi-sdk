@@ -1,9 +1,8 @@
 name: Sync Pulso TransMi to Supabase
 
 on:
-  schedule:
-    - cron: "7 * * * *"
-  workflow_dispatch:
+  repository_dispatch:
+    types: [cron-job-sync]
 
 permissions:
   contents: read
