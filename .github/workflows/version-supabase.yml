@@ -38,4 +38,4 @@ jobs:
           path: |
             snapshot/**
             artifacts/extratrees_model.joblib
-          retention-days: 30
+          retention-days: 3

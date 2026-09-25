@@ -1,6 +1,7 @@
 """Evalúa drift de predicciones y reentrena si la accuracy cae bajo el umbral."""
 import os
 import subprocess
+import sys
 from pathlib import Path
 import httpx
 import pandas as pd
@@ -33,7 +34,7 @@ def main():
     accuracy = max(0.0, 1.0 - wape)
     print(f"accuracy={accuracy:.4f} threshold={THRESHOLD:.4f} matched={len(joined)}")
     if accuracy < THRESHOLD:
-        subprocess.run([str(ROOT / ".venv/bin/python"), str(ROOT / "scripts/train_extratrees.py")], check=True)
+        subprocess.run([sys.executable, str(ROOT / "scripts/train_extratrees.py")], check=True)
         print("retrained=true")
     else:
         print("retrained=false")
