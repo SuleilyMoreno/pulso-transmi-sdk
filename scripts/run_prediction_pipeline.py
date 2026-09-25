@@ -34,6 +34,41 @@ def features_for_history(history: pd.Series, target: pd.Timestamp, context_row: 
     return {"station_code": station_code, "lag_1": history.iloc[-1], "lag_4": history.iloc[-4], "lag_96": history.iloc[-96], "lag_672": history.iloc[-672], "rolling_96": history.iloc[-96:].mean(), "slot": target.hour * 4 + target.minute // 15, "dow": target.dayofweek, "is_weekend": int(target.dayofweek >= 5), "rain_mm": context_row.rain_mm, "rain_forecast": context_row.rain_forecast, "temperature_c": context_row.temperature_c, "temperature_forecast": context_row.temperature_forecast, "event_intensity": context_row.event_intensity}
 
 
+def persist_estimates(payload: dict, response_body: dict) -> None:
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    if not url or not key:
+        print("Supabase no configurado; no se guardan prediction_estimates.")
+        return
+    submission_id = response_body.get("submission_id")
+    rows = [
+        {
+            "run_id": payload["client_run_id"],
+            "cycle_id": payload["cycle_id"],
+            "submission_id": submission_id,
+            "station_id": item["station_id"],
+            "target_at": item["target_at"],
+            "estimated_value": item["value"],
+            "model_version": payload["model"]["version"],
+            "data_cutoff": payload["data_cutoff"],
+            "status": response_body.get("status", "accepted"),
+        }
+        for item in payload["predictions"]
+    ]
+    with httpx.Client(
+        base_url=url.rstrip("/"),
+        headers={"apikey": key, "Authorization": f"Bearer {key}"},
+        timeout=60,
+    ) as client:
+        result = client.post(
+            "/rest/v1/prediction_estimates",
+            params={"on_conflict": "run_id,station_id,target_at"},
+            headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
+            json=rows,
+        )
+        result.raise_for_status()
+    print(f"Predicciones guardadas en Supabase: {len(rows)}")
+
 def main() -> None:
     api_key = os.environ["PULSO_API_KEY"]
     dry_run = os.getenv("PULSO_DRY_RUN", "0") == "1"
@@ -89,7 +124,9 @@ def main() -> None:
             print(response.text)
             return
         response.raise_for_status()
+        response_body = response.json()
         print(response.text)
+        persist_estimates(payload, response_body)
 
 if __name__ == "__main__":
     main()

@@ -60,4 +60,6 @@ jobs:
         if: steps.cycle.outputs.open == 'true'
         env:
           PULSO_API_KEY: ${{ secrets.PULSO_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: python scripts/run_prediction_pipeline.py
