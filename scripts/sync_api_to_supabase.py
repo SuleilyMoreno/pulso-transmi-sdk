@@ -62,9 +62,13 @@ def main():
 
         last = db.get("/rest/v1/time_dimension", params={"select": "observed_at", "order": "observed_at.desc", "limit": 1})
         last.raise_for_status()
-        params = {}
+        # Reconsultamos una ventana móvil para capturar datos tardíos o corregidos.
+        # El upsert evita duplicados y actualiza registros recientes.
         if last.json():
-            params["start"] = (pd.Timestamp(last.json()[0]["observed_at"]) + timedelta(minutes=15)).isoformat()
+            latest_loaded = pd.Timestamp(last.json()[0]["observed_at"])
+            params = {"start": (latest_loaded - timedelta(days=7)).isoformat()}
+        else:
+            params = {}
         context = api_rows(api, "/v1/context", params)
         observations = api_rows(api, "/v1/observations", params)
         times = []
@@ -79,7 +83,7 @@ def main():
         upsert(db, "weather_context", weather, "observed_at")
         upsert(db, "event_context", events, "observed_at")
         upsert(db, "demand_observations", observations, "observed_at,station_id")
-        print(f"Sincronizados: {len(station_rows)} estaciones, {len(context)} contextos y {len(observations)} observaciones nuevas")
+        print(f"Sincronizados: {len(station_rows)} estaciones, {len(context)} contextos y {len(observations)} observaciones revisadas desde {params.get('start', 'el inicio')}")
 
 
 if __name__ == "__main__":
