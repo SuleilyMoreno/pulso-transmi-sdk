@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
-TABLES = ["corridors", "stations", "time_dimension", "weather_context", "event_context", "demand_observations", "prediction_estimates", "ingestion_runs"]
+TABLES = ["corridors", "stations", "time_dimension", "weather_context", "event_context", "demand_observations", "prediction_estimates", "drift_metrics", "ingestion_runs"]
 
 def fetch_all(client, table):
     rows, offset = [], 0
