@@ -24,6 +24,7 @@ def handler(request):
             observations = fetch(client, "demand_observations", "station_id,observed_at,demand", 1000, "observed_at.desc")
             predictions = fetch(client, "prediction_estimates", "station_id,target_at,estimated_value,created_at,model_version,status", 1000, "created_at.desc")
             runs = fetch(client, "ingestion_runs", "ingestion_id,started_at,status,rows_loaded", 20, "started_at.desc")
+            drift_metrics = fetch(client, "drift_metrics", "metric_id,evaluated_at,prediction_batch_at,accuracy,wape,matched_predictions,threshold,drift_detected,retrained,status,details", 1000, "evaluated_at.desc")
     except Exception as exc:
         return {"statusCode": 502, "body": {"error": f"No se pudo consultar Supabase: {exc}"}}
 
@@ -45,14 +46,31 @@ def handler(request):
         denom = sum(abs(float(x["actual"])) for x in matched) or 1
         accuracy = max(0, 1 - sum(abs(x["error"]) for x in matched) / denom)
     model_version = next((p.get("model_version") for p in latest_predictions if p.get("model_version")), "No disponible")
+    latest_metric = drift_metrics[0] if drift_metrics else None
+    metric_values = [float(m["accuracy"]) for m in drift_metrics if m.get("accuracy") is not None]
+    rolling_24h = sum(metric_values[:24]) / len(metric_values[:24]) if metric_values else None
+    last_run = runs[0] if runs else (
+        {"started_at": latest_predictions[0]["created_at"], "status": "prediction_submitted", "rows_loaded": len(latest_predictions)}
+        if latest_predictions else None
+    )
     payload = {
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "stations": stations,
         "series": {sid: rows[-96:] for sid, rows in obs_by_station.items()},
         "errors": errors[-500:],
         "matched_errors": matched[-500:],
-        "metrics": {"accuracy": accuracy, "matched": len(matched), "rolling_24h": None, "data_drift": None, "concept_drift": None},
-        "last_run": runs[0] if runs else None,
+        "metrics": {
+            "accuracy": latest_metric.get("accuracy") if latest_metric and latest_metric.get("accuracy") is not None else accuracy,
+            "matched": latest_metric.get("matched_predictions", len(matched)) if latest_metric else len(matched),
+            "rolling_24h": rolling_24h,
+            "data_drift": None,
+            "concept_drift": latest_metric.get("drift_detected") if latest_metric else None,
+            "wape": latest_metric.get("wape") if latest_metric else None,
+            "status": latest_metric.get("status") if latest_metric else "no_metrics",
+            "retrained": latest_metric.get("retrained") if latest_metric else False,
+        },
+        "drift_history": drift_metrics[:100],
+        "last_run": last_run,
         "model_version": model_version,
         "leaderboard": None,
     }
