@@ -76,15 +76,21 @@ def main() -> None:
         row = features_for_history(history, target_at, latest_context, station_codes[station_id])
         value = float(np.maximum(model.predict(pd.DataFrame([row])[columns])[0], 0))
         predictions.append({"station_id": station_id, "target_at": target["target_at"], "value": round(value, 4)})
-
-    payload = {"schema_version": "1.0", "cycle_id": cycle["cycle_id"], "client_run_id": f"extratrees-pipeline-{uuid.uuid4().hex}", "data_cutoff": cycle["data_cutoff"], "model": {"version": "extratrees-pipeline-1.0", "trained_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "training_data_end": cycle["data_cutoff"], "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()}, "predictions": predictions}
+    client_run_id = f"extratrees-pipeline-{cycle['cycle_id']}"
+    payload = {"schema_version": "1.0", "cycle_id": cycle["cycle_id"], "client_run_id": client_run_id, "model": {"version": "extratrees-pipeline-1.0", "trained_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "training_data_end": cycle["data_cutoff"], "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()}, "predictions": predictions}
     if dry_run:
         print({"status": "dry_run", "cycle_id": cycle["cycle_id"], "predictions": len(predictions)})
         return
     with httpx.Client(base_url=API_URL, headers=headers, timeout=60) as client:
         response = client.post("/v1/submissions", headers={"Idempotency-Key": payload["client_run_id"]}, json=payload)
-        response.raise_for_status()
-        print(response.text)
+       if response.status_code == 409:
+            print(f"El ciclo {cycle['cycle_id']} ya tiene una submission.")
+            print("Se omite el reenvío duplicado.")
+            print(response.text)
+            return
+
+response.raise_for_status()
+print(response.text)
 
 
 if __name__ == "__main__":
