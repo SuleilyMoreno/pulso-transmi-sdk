@@ -4,6 +4,13 @@ on:
   workflow_run:
     workflows: ["Sync Pulso TransMi to Supabase"]
     types: [completed]
+  push:
+    branches: [main]
+    paths:
+      - "scripts/**"
+      - "src/**"
+      - ".github/workflows/version-supabase.yml"
+      - "pyproject.toml"
   workflow_dispatch:
 
 jobs:
@@ -21,18 +28,53 @@ jobs:
 
       - run: python -m pip install httpx pandas joblib scikit-learn
 
+      - name: Build version signature
+        id: signature
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          latest=$(curl --fail-with-body -sS --max-time 30 \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            "$SUPABASE_URL/rest/v1/demand_observations?select=observed_at&order=observed_at.desc&limit=1")
+          count=$(curl --fail-with-body -sSI --max-time 30 \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Prefer: count=exact" \
+            "$SUPABASE_URL/rest/v1/demand_observations?select=observed_at&limit=1" \
+            | awk -F'/' 'tolower($1)=="content-range:" {gsub(/\r/, "", $2); print $2}')
+          latest_at=$(python -c 'import json,sys; print(json.load(sys.stdin)[0]["observed_at"])' <<< "$latest")
+          data_signature=$(printf "%s|%s" "${count:-unknown}" "$latest_at" | sha256sum | cut -d' ' -f1)
+          echo "data_signature=$data_signature" >> "$GITHUB_OUTPUT"
+          echo "data_signature=$data_signature"
+
+      - name: Prepare version state
+        run: mkdir -p .version-state && date -u +%s > .version-state/run
+
+      - name: Check whether versioning is needed
+        id: state
+        uses: actions/cache@v4
+        with:
+          path: .version-state
+          key: version-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.sha }}-${{ steps.signature.outputs.data_signature }}
+
       - name: Export Supabase snapshot
+        if: steps.state.outputs.cache-hit != 'true'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: python scripts/export_supabase_snapshot.py
 
       - name: Train model directly from Pulso TransMi API
+        if: steps.state.outputs.cache-hit != 'true'
         env:
           PULSO_API_KEY: ${{ secrets.PULSO_API_KEY }}
         run: python scripts/train_extratrees_api.py
 
       - uses: actions/upload-artifact@v4
+        if: steps.state.outputs.cache-hit != 'true'
         with:
           name: supabase-snapshot-and-model-${{ github.run_number }}
           path: |
