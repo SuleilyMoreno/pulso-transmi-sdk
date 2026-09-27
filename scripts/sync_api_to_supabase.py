@@ -219,7 +219,7 @@ def main() -> None:
                 client,
                 "weather_context",
                 contexts,
-                "station_id,observed_at",
+                "observed_at",
             )
 
         final_rows = supabase_get(
