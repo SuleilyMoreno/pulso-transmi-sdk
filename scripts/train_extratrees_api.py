@@ -35,6 +35,16 @@ def get_all(client: httpx.Client, endpoint: str) -> list[dict]:
             return rows
 
 
+def get_observations(client: httpx.Client) -> pd.DataFrame:
+    historical = get_all(client, "/v1/observations")
+    released = get_all(client, "/v1/stream/observations")
+    rows = historical + [
+        {key: row[key] for key in ("station_id", "observed_at", "demand")}
+        for row in released
+    ]
+    return pd.DataFrame(rows).drop_duplicates(["station_id", "observed_at"], keep="last")
+
+
 def main() -> None:
     api_key = os.environ["PULSO_API_KEY"]
     headers = {
@@ -43,7 +53,7 @@ def main() -> None:
     }
 
     with httpx.Client(base_url=API_URL, headers=headers, timeout=90) as client:
-        observations = pd.DataFrame(get_all(client, "/v1/observations"))
+        observations = get_observations(client)
         context = pd.DataFrame(get_all(client, "/v1/context"))
 
     observations["observed_at"] = pd.to_datetime(observations["observed_at"], utc=True)

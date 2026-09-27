@@ -48,7 +48,7 @@ def main():
         drift_detected = accuracy < THRESHOLD
         retrained = False
         if drift_detected:
-            subprocess.run([sys.executable, str(ROOT / "scripts/train_extratrees.py")], check=True)
+            subprocess.run([sys.executable, str(ROOT / "scripts/train_extratrees_api.py")], check=True)
             retrained = True
         metric = {"prediction_batch_at": recent.created_at.max().isoformat(), "accuracy": accuracy, "wape": wape, "matched_predictions": int(len(joined)), "threshold": THRESHOLD, "drift_detected": drift_detected, "retrained": retrained, "status": "ok", "details": {"stations": int(joined.station_id.nunique())}}
         record_metric(client, metric)

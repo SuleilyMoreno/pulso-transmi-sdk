@@ -42,6 +42,17 @@ def normalize_station_id(value: object) -> str:
     return str(value).strip().zfill(5)
 
 
+def get_observations(client: httpx.Client) -> pd.DataFrame:
+    """Combina historia y observaciones reales liberadas por el stream."""
+    historical = get_all(client, "/v1/observations", {})
+    released = get_all(client, "/v1/stream/observations", {})
+    rows = historical + [
+        {key: row[key] for key in ("station_id", "observed_at", "demand")}
+        for row in released
+    ]
+    return pd.DataFrame(rows).drop_duplicates(["station_id", "observed_at"], keep="last")
+
+
 def build_features(
     obs_df: pd.DataFrame,
     context_df: pd.DataFrame,
@@ -185,7 +196,7 @@ def main() -> None:
 
         # 2. Descargar TODOS los datos disponibles (sin filtro de fecha)
         print("Descargando observaciones...")
-        observations = pd.DataFrame(get_all(client, "/v1/observations", {}))
+        observations = get_observations(client)
         print("Descargando contexto...")
         context = pd.DataFrame(get_all(client, "/v1/context", {}))
 

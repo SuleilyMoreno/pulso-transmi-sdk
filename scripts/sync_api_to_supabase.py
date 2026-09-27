@@ -104,6 +104,14 @@ def fetch_all(
     return rows
 
 
+def clean_stream_observations(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convierte observaciones liberadas al esquema de demand_observations."""
+    return [
+        {"station_id": row["station_id"], "observed_at": row["observed_at"], "demand": row["demand"]}
+        for row in rows
+    ]
+
+
 def main() -> None:
     supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
     service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
@@ -170,7 +178,12 @@ def main() -> None:
             {"start": start, "end": now.isoformat()},
             api_key,
         )
-        print(f"Observaciones recibidas: {len(observations)}")
+        stream_observations = clean_stream_observations(fetch_all(
+            client, "/v1/stream/observations", {}, api_key
+        ))
+        observations = observations + stream_observations
+        print(f"Observaciones históricas recibidas: {len(observations) - len(stream_observations)}")
+        print(f"Observaciones liberadas del stream: {len(stream_observations)}")
 
         if observations:
             supabase_upsert(
