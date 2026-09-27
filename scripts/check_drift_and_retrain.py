@@ -46,7 +46,14 @@ def main():
         predictions["created_at"] = pd.to_datetime(predictions.created_at, utc=True)
         observations["observed_at"] = pd.to_datetime(observations.observed_at, utc=True)
         recent = predictions[predictions.created_at == predictions.created_at.max()]
+        print(
+            f"Diagnóstico: predicciones={len(predictions)} recientes={len(recent)} "
+            f"targets={recent.target_at.min()}..{recent.target_at.max()} "
+            f"observaciones={len(observations)} "
+            f"observed_at={observations.observed_at.min()}..{observations.observed_at.max()}"
+        )
         joined = recent.merge(observations, left_on=["station_id", "target_at"], right_on=["station_id", "observed_at"])
+        print(f"Diagnóstico: coincidencias={len(joined)}")
         if joined.empty:
             record_metric(client, {"prediction_batch_at": recent.created_at.iloc[0].isoformat(), "threshold": THRESHOLD, "status": "awaiting_actuals", "details": {"reason": "no_prediction_actual_matches"}})
             print("Las predicciones recientes aún no tienen valores reales")
