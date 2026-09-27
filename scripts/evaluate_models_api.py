@@ -52,7 +52,7 @@ def load_data(client):
     frame["station_code"] = frame.station_id.map(codes)
     frame = frame.dropna(subset=["station_code", *FEATURES, "demand"])
     cutoff = frame.observed_at.max() - pd.Timedelta(days=7)
-    return frame[frame.observed_at <= cutoff], frame[frame.observed_at > cutoff], codes
+    return frame[frame.observed_at <= cutoff], frame[frame.observed_at > cutoff], frame, codes
 
 
 def score(y, prediction):
@@ -65,7 +65,7 @@ def main():
     key = os.environ["PULSO_API_KEY"]
     headers = {"Authorization": f"Bearer {key}", "User-Agent": "pulso-transmi-model-selection/1.0"}
     with httpx.Client(base_url=API_URL, headers=headers, timeout=120) as client:
-        train, valid, codes = load_data(client)
+        train, valid, full, codes = load_data(client)
     columns = ["station_code", *FEATURES]
     models = {
         "ExtraTrees": ExtraTreesRegressor(n_estimators=400, min_samples_leaf=2, max_features=0.9, n_jobs=-1, random_state=42),
@@ -84,7 +84,9 @@ def main():
     output = ROOT / "artifacts"
     output.mkdir(exist_ok=True)
     metrics.to_csv(output / "model_comparison_api.csv", index=False)
-    joblib.dump({"model": fitted[winner], "features": columns, "station_codes": codes, "model_name": winner, "trained_rows": len(train), "trained_at": datetime.now(timezone.utc).isoformat()}, output / "best_model_api.joblib", compress=3)
+    production_model = models[winner].__class__(**models[winner].get_params())
+    production_model.fit(full[columns], full.demand)
+    joblib.dump({"model": production_model, "features": columns, "station_codes": codes, "model_name": winner, "trained_rows": len(full), "trained_at": datetime.now(timezone.utc).isoformat()}, output / "best_model_api.joblib", compress=3)
     print(f"train={len(train):,} validation={len(valid):,} cutoff={train.observed_at.max().isoformat()}")
     print(metrics.to_string(index=False, formatters={"MAE": "{:.2f}".format, "RMSE": "{:.2f}".format, "WAPE": "{:.4f}".format, "Accuracy": "{:.2%}".format}))
     print(f"WINNER={winner}")
