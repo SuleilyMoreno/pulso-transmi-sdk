@@ -1,6 +1,9 @@
 name: Sync Pulso TransMi to Supabase
 
 on:
+  schedule:
+    - cron: "0 * * * *"   # cada hora en punto (UTC)
+  workflow_dispatch:        # ejecución manual desde GitHub Actions
   repository_dispatch:
     types: [cron-job-sync]
 
