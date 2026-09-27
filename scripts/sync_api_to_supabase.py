@@ -98,9 +98,6 @@ def fetch_all(
             break
         cursor = next_cursor
 
-        if len(page) < PAGE_SIZE:
-            break
-
     return rows
 
 
