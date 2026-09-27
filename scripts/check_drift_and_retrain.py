@@ -42,7 +42,7 @@ def main():
         predictions = pd.DataFrame(fetch_all(
             client,
             "prediction_estimates",
-            "cycle_id,station_id,target_at,estimated_value,created_at",
+            "cycle_id,station_id,target_at,estimated_value,created_at,data_cutoff",
             order="created_at.desc,station_id.asc,target_at.asc",
         ))
         observations = pd.DataFrame(fetch_all(
