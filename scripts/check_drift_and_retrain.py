@@ -37,7 +37,12 @@ def main():
             "station_id,target_at,estimated_value,created_at",
             order="created_at.desc",
         ))
-        observations = pd.DataFrame(fetch(client, "demand_observations", "station_id,observed_at,demand"))
+        observations = pd.DataFrame(fetch(
+            client,
+            "demand_observations",
+            "station_id,observed_at,demand",
+            order="observed_at.desc",
+        ))
         if predictions.empty or observations.empty:
             record_metric(client, {"threshold": THRESHOLD, "status": "insufficient_data", "details": {"reason": "predictions_or_observations_empty"}})
             print("Sin datos suficientes para medir drift")
