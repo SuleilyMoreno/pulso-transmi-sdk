@@ -218,6 +218,7 @@ def main() -> None:
 
     # 5. Guardar modelo
     model_path = ROOT / "artifacts" / "extratrees_model.joblib"
+    model_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, model_path)
 
     # 6. Construir historial por estación para predicción
