@@ -11,13 +11,21 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 THRESHOLD = float(os.getenv("DRIFT_ACCURACY_THRESHOLD", "0.85"))
 
-def fetch(client, table, select, order=None):
-    params = {"select": select, "limit": 100000}
-    if order:
-        params["order"] = order
-    response = client.get(f"/rest/v1/{table}", params=params)
-    response.raise_for_status()
-    return response.json()
+def fetch_all(client, table, select, order):
+    rows = []
+    offset = 0
+    page_size = 1000
+    while True:
+        response = client.get(
+            f"/rest/v1/{table}",
+            params={"select": select, "order": order, "limit": page_size, "offset": offset},
+        )
+        response.raise_for_status()
+        page = response.json()
+        rows.extend(page)
+        if len(page) < page_size:
+            return rows
+        offset += page_size
 
 def record_metric(client, metric):
     response = client.post(
@@ -31,13 +39,13 @@ def main():
     key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
     headers = {"apikey": key, "Authorization": f"Bearer {key}"}
     with httpx.Client(base_url=os.environ["SUPABASE_URL"].rstrip("/"), headers=headers, timeout=60) as client:
-        predictions = pd.DataFrame(fetch(
+        predictions = pd.DataFrame(fetch_all(
             client,
             "prediction_estimates",
-            "station_id,target_at,estimated_value,created_at",
-            order="created_at.desc",
+            "cycle_id,station_id,target_at,estimated_value,created_at",
+            order="created_at.desc,station_id.asc,target_at.asc",
         ))
-        observations = pd.DataFrame(fetch(
+        observations = pd.DataFrame(fetch_all(
             client,
             "demand_observations",
             "station_id,observed_at,demand",
@@ -50,18 +58,21 @@ def main():
         predictions["target_at"] = pd.to_datetime(predictions.target_at, utc=True)
         predictions["created_at"] = pd.to_datetime(predictions.created_at, utc=True)
         observations["observed_at"] = pd.to_datetime(observations.observed_at, utc=True)
-        recent = predictions[predictions.created_at == predictions.created_at.max()]
+        latest_cycle = predictions.sort_values("created_at").iloc[-1]["cycle_id"]
+        recent = predictions[predictions.cycle_id == latest_cycle].copy()
+        expected = len(recent)
         print(
-            f"Diagnóstico: predicciones={len(predictions)} recientes={len(recent)} "
+            f"Diagnóstico: predicciones={len(predictions)} ciclo={latest_cycle} "
+            f"esperadas={expected} "
             f"targets={recent.target_at.min()}..{recent.target_at.max()} "
             f"observaciones={len(observations)} "
             f"observed_at={observations.observed_at.min()}..{observations.observed_at.max()}"
         )
         joined = recent.merge(observations, left_on=["station_id", "target_at"], right_on=["station_id", "observed_at"])
         print(f"Diagnóstico: coincidencias={len(joined)}")
-        if joined.empty:
-            record_metric(client, {"prediction_batch_at": recent.created_at.iloc[0].isoformat(), "threshold": THRESHOLD, "status": "awaiting_actuals", "details": {"reason": "no_prediction_actual_matches"}})
-            print("Las predicciones recientes aún no tienen valores reales")
+        if len(joined) < expected:
+            record_metric(client, {"prediction_batch_at": recent.created_at.max().isoformat(), "threshold": THRESHOLD, "matched_predictions": int(len(joined)), "status": "awaiting_actuals", "details": {"cycle_id": latest_cycle, "expected_predictions": expected, "reason": "cycle_not_complete"}})
+            print(f"Ciclo incompleto: {len(joined)}/{expected} valores reales")
             return
         wape = float((joined.demand - joined.estimated_value).abs().sum() / max(joined.demand.sum(), 1))
         accuracy = max(0.0, 1.0 - wape)
@@ -70,7 +81,12 @@ def main():
         if drift_detected:
             subprocess.run([sys.executable, str(ROOT / "scripts/train_extratrees_api.py")], check=True)
             retrained = True
-        metric = {"prediction_batch_at": recent.created_at.max().isoformat(), "accuracy": accuracy, "wape": wape, "matched_predictions": int(len(joined)), "threshold": THRESHOLD, "drift_detected": drift_detected, "retrained": retrained, "status": "ok", "details": {"stations": int(joined.station_id.nunique())}}
+        joined["horizon_minutes"] = (joined.target_at - pd.to_datetime(recent.data_cutoff.iloc[0], utc=True)).dt.total_seconds() / 60 if "data_cutoff" in recent else None
+        by_horizon = {
+            str(int(horizon)): float(max(0.0, 1.0 - (group.demand - group.estimated_value).abs().sum() / max(group.demand.sum(), 1)))
+            for horizon, group in joined.groupby("horizon_minutes")
+        }
+        metric = {"prediction_batch_at": recent.created_at.max().isoformat(), "accuracy": accuracy, "wape": wape, "matched_predictions": int(len(joined)), "threshold": THRESHOLD, "drift_detected": drift_detected, "retrained": retrained, "status": "ok", "details": {"cycle_id": latest_cycle, "expected_predictions": expected, "stations": int(joined.station_id.nunique()), "accuracy_by_horizon": by_horizon}}
         record_metric(client, metric)
         print(f"accuracy={accuracy:.4f} threshold={THRESHOLD:.4f} matched={len(joined)} drift={drift_detected} retrained={retrained}")
 
