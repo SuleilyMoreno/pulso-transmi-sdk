@@ -37,6 +37,11 @@ def get_all(client: httpx.Client, endpoint: str, params: dict) -> list[dict]:
             return rows
 
 
+def normalize_station_id(value: object) -> str:
+    """Conserva los IDs de estación como texto de cinco dígitos."""
+    return str(value).strip().zfill(5)
+
+
 def build_features(
     obs_df: pd.DataFrame,
     context_df: pd.DataFrame,
@@ -75,6 +80,7 @@ def predict_target(
     model,
 ) -> float:
     """Predice la demanda para un target_at específico de una estación."""
+    station_id = normalize_station_id(station_id)
     history = obs_by_station.get(station_id, pd.Series([], dtype=float))
 
     # Lags: calculados respecto al punto exacto del target
@@ -185,7 +191,7 @@ def main() -> None:
 
     # 3. Preparar datos
     observations["observed_at"] = pd.to_datetime(observations["observed_at"], utc=True)
-    observations["station_id"] = observations["station_id"].astype("string")
+    observations["station_id"] = observations["station_id"].map(normalize_station_id)
     context["observed_at"] = pd.to_datetime(context["observed_at"], utc=True)
 
     # Filtrar hasta el cutoff del ciclo
@@ -196,6 +202,9 @@ def main() -> None:
 
     print(f"Datos de entrenamiento: {len(obs_train)} observaciones, {len(ctx_train)} contextos")
     print(f"Rango: {obs_train.observed_at.min()} → {obs_train.observed_at.max()}")
+
+    if obs_train.empty or ctx_train.empty:
+        raise RuntimeError("La API no devolvió observaciones y contexto hasta el cutoff")
 
     station_codes = {s: i for i, s in enumerate(sorted(obs_train.station_id.unique()))}
 
@@ -228,9 +237,13 @@ def main() -> None:
     }
 
     # 7. Predecir targets del ciclo
+    targets = cycle.get("targets") or []
+    if not targets:
+        raise RuntimeError("El ciclo abierto no contiene targets")
+
     predictions = []
     for target in cycle["targets"]:
-        station_id = target["station_id"]
+        station_id = normalize_station_id(target["station_id"])
         target_at = pd.Timestamp(target["target_at"]).tz_localize("UTC") \
             if pd.Timestamp(target["target_at"]).tzinfo is None \
             else pd.Timestamp(target["target_at"])
@@ -244,6 +257,17 @@ def main() -> None:
             "value": round(value, 4),
         })
 
+    expected_keys = {
+        (normalize_station_id(t["station_id"]), str(t["target_at"]))
+        for t in targets
+    }
+    actual_keys = {(p["station_id"], p["target_at"]) for p in predictions}
+    if actual_keys != expected_keys or len(predictions) != len(targets):
+        raise RuntimeError(
+            f"Cobertura de targets inválida: {len(predictions)} predicciones para "
+            f"{len(targets)} targets"
+        )
+
     print(f"Predicciones generadas: {len(predictions)}")
 
     # 8. Construir payload y enviar
@@ -251,7 +275,7 @@ def main() -> None:
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
     ).strip()
 
-    client_run_id = f"extratrees-pipeline-{cycle['cycle_id']}"
+    client_run_id = f"extratrees-pipeline-{cycle['cycle_id']}-{uuid.uuid4().hex}"
     payload = {
         "schema_version": "1.0",
         "cycle_id": cycle["cycle_id"],
@@ -282,6 +306,15 @@ def main() -> None:
             return
         response.raise_for_status()
         response_body = response.json()
+        if response_body.get("status") != "accepted":
+            raise RuntimeError(f"La API no aceptó la submission: {response_body}")
+        if response_body.get("predictions_received") != len(predictions):
+            raise RuntimeError(
+                f"La API recibió {response_body.get('predictions_received')} predicciones; "
+                f"se esperaban {len(predictions)}"
+            )
+        if response_body.get("is_official") is not True:
+            raise RuntimeError("La submission no fue marcada como oficial")
         print(response.text)
         persist_estimates(payload, response_body)
 
