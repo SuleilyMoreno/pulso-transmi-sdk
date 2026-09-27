@@ -1,89 +1,244 @@
-"""Sincroniza directamente la API Pulso TransMi con Supabase, sin CSV."""
-
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import httpx
-import pandas as pd
 
 
 API_URL = "https://pulso-transmi.72-60-245-2.sslip.io"
-BATCH_SIZE = 500
+SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
+SUPABASE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+PULSO_API_KEY = os.environ["PULSO_API_KEY"]
+
+PAGE_SIZE = 5000
+LOOKBACK_DAYS = 7
 
 
-def chunks(rows):
-    for start in range(0, len(rows), BATCH_SIZE):
-        yield rows[start:start + BATCH_SIZE]
+def supabase_headers() -> dict[str, str]:
+    return {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates,return=minimal",
+    }
 
 
-def api_rows(client, endpoint, params=None):
-    rows, cursor = [], None
-    while True:
-        request_params = dict(params or {}, limit=5000)
-        if cursor:
-            request_params["cursor"] = cursor
-        response = client.get(endpoint, params=request_params)
-        response.raise_for_status()
-        payload = response.json()
-        rows.extend(payload["data"])
-        cursor = payload.get("next_cursor")
-        if cursor is None:
-            return rows
+def get_json(
+    client: httpx.Client,
+    path: str,
+    params: dict[str, Any] | None = None,
+) -> Any:
+    response = client.get(
+        f"{API_URL}{path}",
+        headers={"Authorization": f"Bearer {PULSO_API_KEY}"},
+        params=params,
+    )
+    response.raise_for_status()
+    return response.json()
 
 
-def upsert(client, table, rows, conflict):
+def supabase_get(
+    client: httpx.Client,
+    table: str,
+    params: dict[str, Any],
+) -> Any:
+    response = client.get(
+        f"{SUPABASE_URL}/rest/v1/{table}",
+        headers=supabase_headers(),
+        params=params,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def supabase_upsert(
+    client: httpx.Client,
+    table: str,
+    rows: list[dict[str, Any]],
+    conflict_columns: str,
+) -> None:
     if not rows:
         return
-    for batch in chunks(rows):
-        response = client.post(
-            f"/rest/v1/{table}",
-            params={"on_conflict": conflict},
-            headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
-            json=batch,
+
+    response = client.post(
+        f"{SUPABASE_URL}/rest/v1/{table}",
+        headers=supabase_headers(),
+        params={"on_conflict": conflict_columns},
+        json=rows,
+    )
+    response.raise_for_status()
+
+
+def extract_items(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return payload
+
+    if isinstance(payload, dict):
+        for key in ("data", "items", "results", "observations", "context"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+
+    return []
+
+
+def extract_cursor(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+
+    return (
+        payload.get("next_cursor")
+        or payload.get("next")
+        or payload.get("cursor")
+    )
+
+
+def fetch_all(
+    client: httpx.Client,
+    endpoint: str,
+    params: dict[str, Any],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    cursor: str | None = None
+
+    while True:
+        page_params = {
+            **params,
+            "limit": PAGE_SIZE,
+        }
+
+        if cursor:
+            page_params["cursor"] = cursor
+
+        payload = get_json(client, endpoint, page_params)
+        page = extract_items(payload)
+
+        if not page:
+            break
+
+        rows.extend(page)
+
+        next_cursor = extract_cursor(payload)
+        if not next_cursor or next_cursor == cursor:
+            break
+
+        cursor = next_cursor
+
+        if len(page) < PAGE_SIZE:
+            break
+
+    return rows
+
+
+def timestamp_key(row: dict[str, Any]) -> str | None:
+    for key in (
+        "observed_at",
+        "observation_at",
+        "target_at",
+        "timestamp",
+        "created_at",
+    ):
+        value = row.get(key)
+        if value:
+            return str(value)
+
+    return None
+
+
+def max_timestamp(rows: list[dict[str, Any]]) -> str | None:
+    timestamps = [timestamp_key(row) for row in rows]
+    timestamps = [value for value in timestamps if value]
+    return max(timestamps) if timestamps else None
+
+
+def main() -> None:
+    now = datetime.now(timezone.utc)
+
+    with httpx.Client(timeout=90.0) as client:
+        latest_rows = supabase_get(
+            client,
+            "demand_observations",
+            {
+                "select": "observed_at",
+                "order": "observed_at.desc",
+                "limit": "1",
+            },
         )
-        response.raise_for_status()
 
+        latest_db = None
+        if latest_rows:
+            latest_db = latest_rows[0].get("observed_at")
 
-def main():
-    supabase_url = os.environ["SUPABASE_URL"].rstrip("/")
-    service_key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-    api_headers = {}
-    if os.getenv("PULSO_API_KEY"):
-        api_headers["Authorization"] = f"Bearer {os.environ['PULSO_API_KEY']}"
-
-    with httpx.Client(base_url=supabase_url, headers={"apikey": service_key, "Authorization": f"Bearer {service_key}"}, timeout=60) as db, httpx.Client(base_url=API_URL, headers=api_headers, timeout=60) as api:
-        station_rows = api.get("/v1/stations").json()["data"]
-        corridor_names = sorted({row["corridor"] for row in station_rows})
-        upsert(db, "corridors", [{"name": name} for name in corridor_names], "name")
-        corridor_data = db.get("/rest/v1/corridors", params={"select": "corridor_id,name"})
-        corridor_data.raise_for_status()
-        corridor_ids = {row["name"]: row["corridor_id"] for row in corridor_data.json()}
-        upsert(db, "stations", [{"station_id": row["station_id"], "station_name": row["station_name"], "corridor_id": corridor_ids[row["corridor"]], "latitude": row["latitude"], "longitude": row["longitude"]} for row in station_rows], "station_id")
-
-        last = db.get("/rest/v1/time_dimension", params={"select": "observed_at", "order": "observed_at.desc", "limit": 1})
-        last.raise_for_status()
-        # Reconsultamos una ventana móvil para capturar datos tardíos o corregidos.
-        # El upsert evita duplicados y actualiza registros recientes.
-        if last.json():
-            latest_loaded = pd.Timestamp(last.json()[0]["observed_at"])
-            params = {"start": (latest_loaded - timedelta(days=7)).isoformat()}
+        if latest_db:
+            latest_dt = datetime.fromisoformat(
+                latest_db.replace("Z", "+00:00")
+            )
+            start_dt = latest_dt - timedelta(days=LOOKBACK_DAYS)
         else:
-            params = {}
-        context = api_rows(api, "/v1/context", params)
-        observations = api_rows(api, "/v1/observations", params)
-        times = []
-        weather = []
-        events = []
-        for row in context:
-            dt = pd.Timestamp(row["observed_at"])
-            times.append({"observed_at": row["observed_at"], "date_value": dt.date().isoformat(), "year": dt.year, "month": dt.month, "day": dt.day, "hour": dt.hour, "minute": dt.minute, "day_of_week": dt.isoweekday(), "is_weekend": dt.weekday() >= 5})
-            weather.append({"observed_at": row["observed_at"], "rain_mm": row["rain_mm"], "rain_forecast": row["rain_forecast"], "temperature_c": row["temperature_c"], "temperature_forecast": row["temperature_forecast"]})
-            events.append({"observed_at": row["observed_at"], "event_intensity": row["event_intensity"]})
-        upsert(db, "time_dimension", times, "observed_at")
-        upsert(db, "weather_context", weather, "observed_at")
-        upsert(db, "event_context", events, "observed_at")
-        upsert(db, "demand_observations", observations, "observed_at,station_id")
-        print(f"Sincronizados: {len(station_rows)} estaciones, {len(context)} contextos y {len(observations)} observaciones revisadas desde {params.get('start', 'el inicio')}")
+            start_dt = now - timedelta(days=LOOKBACK_DAYS)
+
+        start = start_dt.isoformat()
+        end = now.isoformat()
+
+        print(f"Último dato existente en Supabase: {latest_db}")
+        print(f"Rango consultado en la API: {start} hasta {end}")
+
+        observations = fetch_all(
+            client,
+            "/v1/observations",
+            {
+                "start": start,
+                "end": end,
+            },
+        )
+
+        contexts = fetch_all(
+            client,
+            "/v1/context",
+            {
+                "start": start,
+                "end": end,
+            },
+        )
+
+        print(f"Observaciones recibidas de la API: {len(observations)}")
+        print(f"Contextos recibidos de la API: {len(contexts)}")
+        print(f"Máxima observación recibida: {max_timestamp(observations)}")
+        print(f"Máximo contexto recibido: {max_timestamp(contexts)}")
+
+        if observations:
+            supabase_upsert(
+                client,
+                "demand_observations",
+                observations,
+                "station_id,observed_at",
+            )
+
+        if contexts:
+            supabase_upsert(
+                client,
+                "weather_context",
+                contexts,
+                "station_id,observed_at",
+            )
+
+        final_rows = supabase_get(
+            client,
+            "demand_observations",
+            {
+                "select": "observed_at",
+                "order": "observed_at.desc",
+                "limit": "1",
+            },
+        )
+
+        latest_after = (
+            final_rows[0].get("observed_at")
+            if final_rows
+            else None
+        )
+
+        print(f"Último dato en Supabase después de cargar: {latest_after}")
 
 
 if __name__ == "__main__":
