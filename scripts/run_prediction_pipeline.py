@@ -226,11 +226,12 @@ def main() -> None:
     observations["station_id"] = observations["station_id"].map(normalize_station_id)
     context["observed_at"] = pd.to_datetime(context["observed_at"], utc=True)
 
-    # Filtrar hasta el cutoff del ciclo
+    # La historia hasta el cutoff alimenta los lags; para entrenar cada
+    # horizonte necesitamos además el valor real futuro que sirve de target.
     obs_train = observations[observations.observed_at <= cutoff].sort_values(
         ["station_id", "observed_at"]
     )
-    ctx_train = context[context.observed_at <= cutoff].sort_values("observed_at")
+    ctx_train = context.sort_values("observed_at")
 
     print(f"Datos de entrenamiento: {len(obs_train)} observaciones, {len(ctx_train)} contextos")
     print(f"Rango: {obs_train.observed_at.min()} → {obs_train.observed_at.max()}")
@@ -238,29 +239,27 @@ def main() -> None:
     if obs_train.empty or ctx_train.empty:
         raise RuntimeError("La API no devolvió observaciones y contexto hasta el cutoff")
 
-    station_codes = {s: i for i, s in enumerate(sorted(obs_train.station_id.unique()))}
+    station_codes = {s: i for i, s in enumerate(sorted(observations.station_id.unique()))}
 
     # 4. Construir features y entrenar
-    train_df = build_features(obs_train, ctx_train, station_codes)
+    feature_df = build_features(observations.sort_values(["station_id", "observed_at"]), ctx_train, station_codes)
     cols = ["station_code"] + FEATURES
-    train_df = train_df.dropna(subset=cols + ["demand"])
-
-    print(f"Filas de entrenamiento (sin NaN): {len(train_df)}")
-
-    model = ExtraTreesRegressor(
-        n_estimators=400,
-        min_samples_leaf=2,
-        max_features=0.9,
-        n_jobs=-1,
-        random_state=42,
-    )
-    model.fit(train_df[cols], train_df.demand)
-    print("Modelo entrenado.")
+    models = {}
+    for horizon in (15, 30, 45, 60):
+        steps = horizon // 15
+        train_df = feature_df.copy()
+        train_df["target"] = train_df.groupby("station_id", sort=False).demand.shift(-steps)
+        train_df = train_df[(train_df.observed_at <= cutoff)].dropna(subset=cols + ["target"])
+        model = ExtraTreesRegressor(n_estimators=400, min_samples_leaf=2, max_features=0.9, n_jobs=-1, random_state=42 + steps)
+        model.fit(train_df[cols], train_df.target)
+        models[horizon] = model
+        print(f"Horizonte {horizon} min: {len(train_df)} filas")
+    print("Modelos por horizonte entrenados con demanda real.")
 
     # 5. Guardar modelo
     model_path = ROOT / "artifacts" / "extratrees_model.joblib"
     model_path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, model_path)
+    joblib.dump(models, model_path)
 
     # 6. Construir historial por estación para predicción
     obs_by_station = {
@@ -281,8 +280,11 @@ def main() -> None:
             if pd.Timestamp(target["target_at"]).tzinfo is None \
             else pd.Timestamp(target["target_at"])
 
+        horizon = int(round((target_at - cutoff).total_seconds() / 60))
+        if horizon not in models:
+            raise RuntimeError(f"Horizonte no soportado por los modelos: {horizon} minutos")
         value, features = predict_target(
-            station_id, target_at, obs_by_station, ctx_train, station_codes, model
+            station_id, target_at, obs_by_station, ctx_train, station_codes, models[horizon]
         )
         predictions.append({
             "station_id": station_id,
