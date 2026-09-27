@@ -11,8 +11,11 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 THRESHOLD = float(os.getenv("DRIFT_ACCURACY_THRESHOLD", "0.85"))
 
-def fetch(client, table, select):
-    response = client.get(f"/rest/v1/{table}", params={"select": select, "limit": 100000})
+def fetch(client, table, select, order=None):
+    params = {"select": select, "limit": 100000}
+    if order:
+        params["order"] = order
+    response = client.get(f"/rest/v1/{table}", params=params)
     response.raise_for_status()
     return response.json()
 
@@ -28,7 +31,12 @@ def main():
     key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
     headers = {"apikey": key, "Authorization": f"Bearer {key}"}
     with httpx.Client(base_url=os.environ["SUPABASE_URL"].rstrip("/"), headers=headers, timeout=60) as client:
-        predictions = pd.DataFrame(fetch(client, "prediction_estimates", "station_id,target_at,estimated_value,created_at"))
+        predictions = pd.DataFrame(fetch(
+            client,
+            "prediction_estimates",
+            "station_id,target_at,estimated_value,created_at",
+            order="created_at.desc",
+        ))
         observations = pd.DataFrame(fetch(client, "demand_observations", "station_id,observed_at,demand"))
         if predictions.empty or observations.empty:
             record_metric(client, {"threshold": THRESHOLD, "status": "insufficient_data", "details": {"reason": "predictions_or_observations_empty"}})
