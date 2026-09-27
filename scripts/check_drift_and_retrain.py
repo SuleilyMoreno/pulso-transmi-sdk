@@ -74,18 +74,34 @@ def main():
             record_metric(client, {"prediction_batch_at": recent.created_at.max().isoformat(), "threshold": THRESHOLD, "matched_predictions": int(len(joined)), "status": "awaiting_actuals", "details": {"cycle_id": latest_cycle, "expected_predictions": expected, "reason": "cycle_not_complete"}})
             print(f"Ciclo incompleto: {len(joined)}/{expected} valores reales")
             return
-        wape = float((joined.demand - joined.estimated_value).abs().sum() / max(joined.demand.sum(), 1))
-        accuracy = max(0.0, 1.0 - wape)
+        # La referencia del proyecto calcula la métrica por estación y luego
+        # promedia esos accuracies; no usa un WAPE global ponderado por demanda.
+        station_scores = []
+        for station_id, station in joined.groupby("station_id"):
+            station_wape = float(
+                (station.demand - station.estimated_value).abs().sum()
+                / max(station.demand.sum(), 1)
+            )
+            station_scores.append({
+                "station_id": station_id,
+                "wape": station_wape,
+                "accuracy": max(0.0, 1.0 - station_wape),
+            })
+        accuracy = float(pd.DataFrame(station_scores).accuracy.mean())
+        wape = 1.0 - accuracy
         drift_detected = accuracy < THRESHOLD
         retrained = False
         if drift_detected:
             subprocess.run([sys.executable, str(ROOT / "scripts/train_extratrees_api.py")], check=True)
             retrained = True
         joined["horizon_minutes"] = (joined.target_at - pd.to_datetime(recent.data_cutoff.iloc[0], utc=True)).dt.total_seconds() / 60 if "data_cutoff" in recent else None
-        by_horizon = {
-            str(int(horizon)): float(max(0.0, 1.0 - (group.demand - group.estimated_value).abs().sum() / max(group.demand.sum(), 1)))
-            for horizon, group in joined.groupby("horizon_minutes")
-        }
+        by_horizon = {}
+        for horizon, horizon_rows in joined.groupby("horizon_minutes"):
+            horizon_station_scores = []
+            for _, station in horizon_rows.groupby("station_id"):
+                station_wape = (station.demand - station.estimated_value).abs().sum() / max(station.demand.sum(), 1)
+                horizon_station_scores.append(max(0.0, 1.0 - station_wape))
+            by_horizon[str(int(horizon))] = float(pd.Series(horizon_station_scores).mean())
         metric = {"prediction_batch_at": recent.created_at.max().isoformat(), "accuracy": accuracy, "wape": wape, "matched_predictions": int(len(joined)), "threshold": THRESHOLD, "drift_detected": drift_detected, "retrained": retrained, "status": "ok", "details": {"cycle_id": latest_cycle, "expected_predictions": expected, "stations": int(joined.station_id.nunique()), "accuracy_by_horizon": by_horizon}}
         record_metric(client, metric)
         print(f"accuracy={accuracy:.4f} threshold={THRESHOLD:.4f} matched={len(joined)} drift={drift_detected} retrained={retrained}")
