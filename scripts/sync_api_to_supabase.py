@@ -182,6 +182,29 @@ def main() -> None:
         print(f"Observaciones históricas recibidas: {len(observations) - len(stream_observations)}")
         print(f"Observaciones liberadas del stream: {len(stream_observations)}")
 
+        # demand_observations referencia time_dimension; crear primero los
+        # timestamps que llegan del stream, aunque todavía no haya contexto.
+        if observations:
+            observation_times = {}
+            for row in observations:
+                observed_at = row["observed_at"]
+                dt = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+                observation_times[observed_at] = {
+                    "observed_at": observed_at,
+                    "date_value": dt.date().isoformat(),
+                    "year": dt.year,
+                    "month": dt.month,
+                    "day": dt.day,
+                    "hour": dt.hour,
+                    "minute": dt.minute,
+                    "day_of_week": dt.isoweekday(),
+                    "is_weekend": dt.weekday() >= 5,
+                }
+            supabase_upsert(
+                client, supabase_url, service_key,
+                "time_dimension", list(observation_times.values()), "observed_at",
+            )
+
         if observations:
             supabase_upsert(
                 client, supabase_url, service_key,
