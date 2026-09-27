@@ -137,14 +137,14 @@ def predict_target(
 
     cols = ["station_code"] + FEATURES
     value = float(model.predict(pd.DataFrame([row])[cols])[0])
-    return max(value, 0.0)
+    return max(value, 0.0), row
 
 
-def persist_estimates(payload: dict, response_body: dict) -> None:
+def persist_estimates(payload: dict, response_body: dict, feature_rows: list[dict]) -> None:
     url = os.getenv("SUPABASE_URL")
     key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
     if not url or not key:
-        print("Supabase no configurado; no se guardan prediction_estimates.")
+        print("Supabase no configurado; no se guardan estimaciones ni features.")
         return
     submission_id = response_body.get("submission_id")
     rows = [
@@ -161,6 +161,18 @@ def persist_estimates(payload: dict, response_body: dict) -> None:
         }
         for item in payload["predictions"]
     ]
+    feature_records = [
+        {
+            "run_id": payload["client_run_id"],
+            "cycle_id": payload["cycle_id"],
+            "station_id": item["station_id"],
+            "target_at": item["target_at"],
+            "model_version": payload["model"]["version"],
+            "data_cutoff": payload["data_cutoff"],
+            "features": item["features"],
+        }
+        for item in feature_rows
+    ]
     with httpx.Client(
         base_url=url.rstrip("/"),
         headers={"apikey": key, "Authorization": f"Bearer {key}"},
@@ -171,6 +183,13 @@ def persist_estimates(payload: dict, response_body: dict) -> None:
             params={"on_conflict": "run_id,station_id,target_at"},
             headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
             json=rows,
+        )
+        result.raise_for_status()
+        result = client.post(
+            "/rest/v1/prediction_features",
+            params={"on_conflict": "run_id,station_id,target_at"},
+            headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
+            json=feature_records,
         )
         result.raise_for_status()
     print(f"Predicciones guardadas en Supabase: {len(rows)}")
@@ -255,19 +274,25 @@ def main() -> None:
         raise RuntimeError("El ciclo abierto no contiene targets")
 
     predictions = []
+    feature_rows = []
     for target in cycle["targets"]:
         station_id = normalize_station_id(target["station_id"])
         target_at = pd.Timestamp(target["target_at"]).tz_localize("UTC") \
             if pd.Timestamp(target["target_at"]).tzinfo is None \
             else pd.Timestamp(target["target_at"])
 
-        value = predict_target(
+        value, features = predict_target(
             station_id, target_at, obs_by_station, ctx_train, station_codes, model
         )
         predictions.append({
             "station_id": station_id,
             "target_at": target["target_at"],
             "value": round(value, 4),
+        })
+        feature_rows.append({
+            "station_id": station_id,
+            "target_at": target["target_at"],
+            "features": features,
         })
 
     expected_keys = {
@@ -329,7 +354,7 @@ def main() -> None:
         if response_body.get("is_official") is not True:
             raise RuntimeError("La submission no fue marcada como oficial")
         print(response.text)
-        persist_estimates(payload, response_body)
+        persist_estimates(payload, response_body, feature_rows)
 
 
 if __name__ == "__main__":
