@@ -66,7 +66,12 @@ def supabase_upsert(
         params={"on_conflict": conflict_columns},
         json=rows,
     )
-    response.raise_for_status()
+
+    if response.is_error:
+        raise RuntimeError(
+            f"Error insertando en {table}: "
+            f"HTTP {response.status_code} - {response.text}"
+        )
 
 
 def extract_items(payload: Any) -> list[dict[str, Any]]:
