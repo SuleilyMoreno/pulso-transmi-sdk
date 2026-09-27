@@ -73,11 +73,13 @@ def build_features(
     )
 
     # Merge con contexto por timestamp exacto
-    df = df.merge(
-        context_df[["observed_at", "rain_mm", "rain_forecast",
-                     "temperature_c", "temperature_forecast", "event_intensity"]],
+    context = context_df[["observed_at", "rain_mm", "rain_forecast",
+                          "temperature_c", "temperature_forecast", "event_intensity"]]
+    df = pd.merge_asof(
+        df.sort_values("observed_at"),
+        context.sort_values("observed_at"),
         on="observed_at",
-        how="left",
+        direction="backward",
     )
     return df
 

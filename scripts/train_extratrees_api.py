@@ -60,7 +60,12 @@ def main() -> None:
     observations["station_id"] = observations["station_id"].astype("string")
     context["observed_at"] = pd.to_datetime(context["observed_at"], utc=True)
 
-    frame = observations.merge(context, on="observed_at", how="left")
+    frame = pd.merge_asof(
+        observations.sort_values("observed_at"),
+        context.sort_values("observed_at"),
+        on="observed_at",
+        direction="backward",
+    )
     frame = frame.sort_values(["station_id", "observed_at"]).reset_index(drop=True)
     frame["slot"] = frame["observed_at"].dt.hour * 4 + frame["observed_at"].dt.minute // 15
     frame["dow"] = frame["observed_at"].dt.dayofweek
