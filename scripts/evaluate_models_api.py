@@ -13,7 +13,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 ROOT = Path(__file__).resolve().parents[1]
 API_URL = "https://pulso-transmi.72-60-245-2.sslip.io"
-FEATURES = ["lag_1", "lag_4", "lag_96", "lag_672", "rolling_96", "slot", "dow", "is_weekend", "rain_mm", "rain_forecast", "temperature_c", "temperature_forecast", "event_intensity"]
+FEATURES = ["lag_1", "lag_2", "lag_4", "lag_8", "lag_96", "lag_192", "lag_672", "rolling_96", "slot", "dow", "is_weekend", "rain_mm", "rain_forecast", "temperature_c", "temperature_forecast", "event_intensity"]
 
 
 def get_all(client, endpoint):
@@ -45,7 +45,7 @@ def load_data(client):
     frame["dow"] = frame.observed_at.dt.dayofweek
     frame["is_weekend"] = (frame.dow >= 5).astype(int)
     grouped = frame.groupby("station_id", sort=False).demand
-    for lag in (1, 4, 96, 672):
+    for lag in (1, 2, 4, 8, 96, 192, 672):
         frame[f"lag_{lag}"] = grouped.shift(lag)
     frame["rolling_96"] = grouped.transform(lambda values: values.shift(1).rolling(96, min_periods=24).mean())
     codes = {station: i for i, station in enumerate(sorted(frame.station_id.unique()))}

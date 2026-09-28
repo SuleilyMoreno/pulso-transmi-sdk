@@ -13,7 +13,7 @@ from sklearn.ensemble import ExtraTreesRegressor
 ROOT = Path(__file__).resolve().parents[1]
 API_URL = "https://pulso-transmi.72-60-245-2.sslip.io"
 FEATURES = [
-    "lag_1", "lag_4", "lag_96", "lag_672", "rolling_96", "slot", "dow",
+    "lag_1", "lag_2", "lag_4", "lag_8", "lag_96", "lag_192", "lag_672", "rolling_96", "slot", "dow",
     "is_weekend", "rain_mm", "rain_forecast", "temperature_c",
     "temperature_forecast", "event_intensity",
 ]
@@ -72,7 +72,7 @@ def main() -> None:
     frame["is_weekend"] = (frame["dow"] >= 5).astype(int)
 
     grouped = frame.groupby("station_id", sort=False)["demand"]
-    for lag in (1, 4, 96, 672):
+    for lag in (1, 2, 4, 8, 96, 192, 672):
         frame[f"lag_{lag}"] = grouped.shift(lag)
     frame["rolling_96"] = grouped.transform(
         lambda values: values.shift(1).rolling(96, min_periods=24).mean()

@@ -16,7 +16,7 @@ from sklearn.ensemble import ExtraTreesRegressor
 ROOT = Path(__file__).resolve().parents[1]
 API_URL = "https://pulso-transmi.72-60-245-2.sslip.io"
 FEATURES = [
-    "lag_1", "lag_4", "lag_96", "lag_672", "rolling_96",
+    "lag_1", "lag_2", "lag_4", "lag_8", "lag_96", "lag_192", "lag_672", "rolling_96",
     "slot", "dow", "is_weekend",
     "rain_mm", "rain_forecast", "temperature_c", "temperature_forecast", "event_intensity",
 ]
@@ -66,7 +66,7 @@ def build_features(
     df["station_code"] = df.station_id.map(station_codes)
 
     grouped = df.groupby("station_id", sort=False).demand
-    for lag in (1, 4, 96, 672):
+    for lag in (1, 2, 4, 8, 96, 192, 672):
         df[f"lag_{lag}"] = grouped.shift(lag)
     df["rolling_96"] = grouped.transform(
         lambda s: s.shift(1).rolling(96, min_periods=24).mean()
@@ -106,8 +106,11 @@ def predict_target(
         return float(history.iloc[idx]) if 0 <= idx < n else 0.0
 
     lag_1 = safe_lag(1)
+    lag_2 = safe_lag(2)
     lag_4 = safe_lag(4)
+    lag_8 = safe_lag(8)
     lag_96 = safe_lag(96)
+    lag_192 = safe_lag(192)
     lag_672 = safe_lag(672)
     rolling_96 = float(history.iloc[max(0, n-96):n].mean()) if n > 0 else 0.0
 
@@ -121,8 +124,11 @@ def predict_target(
     row = {
         "station_code": station_codes.get(station_id, 0),
         "lag_1": lag_1,
+        "lag_2": lag_2,
         "lag_4": lag_4,
+        "lag_8": lag_8,
         "lag_96": lag_96,
+        "lag_192": lag_192,
         "lag_672": lag_672,
         "rolling_96": rolling_96,
         "slot": target_at.hour * 4 + target_at.minute // 15,
