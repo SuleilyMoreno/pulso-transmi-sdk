@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import datetime, timezone
 import httpx
@@ -100,3 +101,13 @@ def handler(request):
     }
     return {"statusCode": 200, "headers": {"content-type": "application/json", "cache-control": "s-maxage=60, stale-while-revalidate=300"}, "body": payload}
 
+
+
+def app(environ, start_response):
+    result = handler(environ)
+    status = result.get("statusCode", 200)
+    body = json.dumps(result.get("body", {}), ensure_ascii=False).encode("utf-8")
+    headers = [("Content-Type", "application/json; charset=utf-8"), ("Content-Length", str(len(body)))]
+    headers.extend((key, value) for key, value in result.get("headers", {}).items())
+    start_response(f"{status} OK", headers)
+    return [body]
