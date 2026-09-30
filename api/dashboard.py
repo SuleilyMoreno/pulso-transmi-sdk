@@ -19,8 +19,11 @@ def handler(request):
     if not url or not key:
         return {"statusCode": 500, "body": {"error": "Configura SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY en Vercel."}}
     headers = {"apikey": key, "Authorization": f"Bearer {key}"}
+    base_url = url.rstrip("/")
+    if base_url.endswith("/rest/v1"):
+        base_url = base_url[:-len("/rest/v1")]
     try:
-        with httpx.Client(base_url=url.rstrip("/"), headers=headers, timeout=20) as client:
+        with httpx.Client(base_url=base_url, headers=headers, timeout=20) as client:
             stations = fetch(client, "stations", "station_id,station_name,latitude,longitude,active", 1000)
             observations = fetch(client, "demand_observations", "station_id,observed_at,demand", 1000, "observed_at.desc")
             predictions = fetch(client, "prediction_estimates", "station_id,target_at,estimated_value,created_at,model_version,status", 1000, "created_at.desc")
