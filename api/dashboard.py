@@ -47,8 +47,26 @@ def handler(request):
         accuracy = max(0, 1 - sum(abs(x["error"]) for x in matched) / denom)
     model_version = next((p.get("model_version") for p in latest_predictions if p.get("model_version")), "No disponible")
     latest_metric = drift_metrics[0] if drift_metrics else None
-    metric_values = [float(m["accuracy"]) for m in drift_metrics if m.get("accuracy") is not None]
+    scored_metrics = [m for m in drift_metrics if m.get("accuracy") is not None]
+    metric_values = [float(m["accuracy"]) for m in scored_metrics]
     rolling_24h = sum(metric_values[:24]) / len(metric_values[:24]) if metric_values else None
+    last_six = scored_metrics[:6]
+    accuracy_cumulative = sum(metric_values) / len(metric_values) if metric_values else None
+    accuracy_last6 = sum(float(m["accuracy"]) for m in last_six) / len(last_six) if last_six else None
+    drift_rate_cumulative = sum(bool(m.get("drift_detected")) for m in scored_metrics) / len(scored_metrics) if scored_metrics else None
+    drift_rate_last6 = sum(bool(m.get("drift_detected")) for m in last_six) / len(last_six) if last_six else None
+    cycle_history = []
+    for metric in reversed(scored_metrics):
+        details = metric.get("details") or {}
+        cycle_history.append({
+            "cycle_id": details.get("cycle_id", f"metric-{metric.get('metric_id')}"),
+            "evaluated_at": metric.get("evaluated_at"),
+            "accuracy": float(metric["accuracy"]),
+            "threshold": float(metric.get("threshold") or 0.8),
+            "drift_detected": bool(metric.get("drift_detected")),
+            "retrained": bool(metric.get("retrained")),
+            "matched_predictions": metric.get("matched_predictions", 0),
+        })
     last_run = runs[0] if runs else (
         {"started_at": latest_predictions[0]["created_at"], "status": "prediction_submitted", "rows_loaded": len(latest_predictions)}
         if latest_predictions else None
@@ -63,6 +81,11 @@ def handler(request):
             "accuracy": latest_metric.get("accuracy") if latest_metric and latest_metric.get("accuracy") is not None else accuracy,
             "matched": latest_metric.get("matched_predictions", len(matched)) if latest_metric else len(matched),
             "rolling_24h": rolling_24h,
+            "accuracy_cumulative": accuracy_cumulative,
+            "accuracy_last6": accuracy_last6,
+            "drift_rate_cumulative": drift_rate_cumulative,
+            "drift_rate_last6": drift_rate_last6,
+            "cycles_evaluated": len(scored_metrics),
             "data_drift": None,
             "concept_drift": latest_metric.get("drift_detected") if latest_metric else None,
             "wape": latest_metric.get("wape") if latest_metric else None,
@@ -70,6 +93,7 @@ def handler(request):
             "retrained": latest_metric.get("retrained") if latest_metric else False,
         },
         "drift_history": drift_metrics[:100],
+        "cycle_history": cycle_history[-100:],
         "last_run": last_run,
         "model_version": model_version,
         "leaderboard": None,
