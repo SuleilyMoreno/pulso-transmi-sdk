@@ -100,6 +100,3 @@ def handler(request):
     }
     return {"statusCode": 200, "headers": {"content-type": "application/json", "cache-control": "s-maxage=60, stale-while-revalidate=300"}, "body": payload}
 
-
-# Vercel Python recognizes this explicit entry point.
-app = handler

@@ -1,0 +1,9 @@
+mlflow.db
+mlruns/
+artifacts/
+.venv/
+notebooks/
+supabase/.temp/
+.git/
+__pycache__/
+*.pyc
