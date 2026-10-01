@@ -1,17 +1,16 @@
 name: Predict and Submit Pulso TransMi
 
 on:
-  workflow_run:
-    workflows: ["Sync Pulso TransMi to Supabase"]
-    types: [completed]
-  workflow_dispatch:
+  schedule:
+    - cron: "5 * * * *"   # cada hora a los :05 min (UTC) — 5 min después del sync
+  workflow_dispatch:        # ejecución manual desde GitHub Actions
 
 permissions:
   contents: read
 
 jobs:
   predict-and-submit:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ true }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -63,3 +62,12 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: python scripts/run_prediction_pipeline.py
+
+      - name: Publish the model trained by the prediction run
+        if: steps.cycle.outputs.open == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: extratrees-model-${{ github.run_id }}
+          path: artifacts/extratrees_model.joblib
+          if-no-files-found: error
+          retention-days: 14
