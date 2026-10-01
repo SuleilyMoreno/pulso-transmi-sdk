@@ -16,7 +16,9 @@ from sklearn.ensemble import ExtraTreesRegressor
 ROOT = Path(__file__).resolve().parents[1]
 API_URL = "https://pulso-transmi.72-60-245-2.sslip.io"
 FEATURES = [
-    "lag_1", "lag_2", "lag_4", "lag_8", "lag_96", "lag_192", "lag_672", "rolling_96",
+    "lag_1", "lag_2", "lag_3", "lag_4", "lag_5", "lag_8", "lag_12", "lag_16",
+    "lag_96", "lag_192", "lag_288", "lag_672", "lag_1344", "rolling_4", "rolling_12",
+    "rolling_24", "rolling_96", "rolling_672",
     "slot", "dow", "is_weekend",
     "rain_mm", "rain_forecast", "temperature_c", "temperature_forecast", "event_intensity",
 ]
@@ -66,11 +68,12 @@ def build_features(
     df["station_code"] = df.station_id.map(station_codes)
 
     grouped = df.groupby("station_id", sort=False).demand
-    for lag in (1, 2, 4, 8, 96, 192, 672):
+    for lag in (1, 2, 3, 4, 5, 8, 12, 16, 96, 192, 288, 672, 1344):
         df[f"lag_{lag}"] = grouped.shift(lag)
-    df["rolling_96"] = grouped.transform(
-        lambda s: s.shift(1).rolling(96, min_periods=24).mean()
-    )
+    for window in (4, 12, 24, 96, 672):
+        df[f"rolling_{window}"] = grouped.transform(
+            lambda s, w=window: s.shift(1).rolling(w, min_periods=max(2, w // 4)).mean()
+        )
 
     # Merge con contexto por timestamp exacto
     context = context_df[["observed_at", "rain_mm", "rain_forecast",
@@ -105,14 +108,11 @@ def predict_target(
         idx = n - i
         return float(history.iloc[idx]) if 0 <= idx < n else 0.0
 
-    lag_1 = safe_lag(1)
-    lag_2 = safe_lag(2)
-    lag_4 = safe_lag(4)
-    lag_8 = safe_lag(8)
-    lag_96 = safe_lag(96)
-    lag_192 = safe_lag(192)
-    lag_672 = safe_lag(672)
-    rolling_96 = float(history.iloc[max(0, n-96):n].mean()) if n > 0 else 0.0
+    lags = {f"lag_{i}": safe_lag(i) for i in (1, 2, 3, 4, 5, 8, 12, 16, 96, 192, 288, 672, 1344)}
+    rolling = {
+        f"rolling_{w}": float(history.iloc[max(0, n-w):n].mean()) if n else 0.0
+        for w in (4, 12, 24, 96, 672)
+    }
 
     # Contexto: buscar el row más cercano al target_at (hacia atrás)
     ctx = context_df[context_df.observed_at <= target_at]
@@ -123,14 +123,8 @@ def predict_target(
 
     row = {
         "station_code": station_codes.get(station_id, 0),
-        "lag_1": lag_1,
-        "lag_2": lag_2,
-        "lag_4": lag_4,
-        "lag_8": lag_8,
-        "lag_96": lag_96,
-        "lag_192": lag_192,
-        "lag_672": lag_672,
-        "rolling_96": rolling_96,
+        **lags,
+        **rolling,
         "slot": target_at.hour * 4 + target_at.minute // 15,
         "dow": target_at.dayofweek,
         "is_weekend": int(target_at.dayofweek >= 5),

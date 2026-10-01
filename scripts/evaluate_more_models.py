@@ -4,12 +4,12 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import ExtraTreesRegressor, HistGradientBoostingRegressor, RandomForestRegressor, RandomForestRegressor, RandomForestRegressor
+from sklearn.ensemble import ExtraTreesRegressor, HistGradientBoostingRegressor, RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 
 ROOT = Path(__file__).resolve().parents[1]
-FEATURES = ["lag_1", "lag_4", "lag_96", "lag_672", "rolling_96", "slot", "dow", "is_weekend", "rain_mm", "rain_forecast", "temperature_c", "temperature_forecast", "event_intensity"]
+FEATURES = ["lag_1", "lag_2", "lag_3", "lag_4", "lag_5", "lag_8", "lag_12", "lag_16", "lag_96", "lag_192", "lag_288", "lag_672", "lag_1344", "rolling_4", "rolling_12", "rolling_24", "rolling_96", "rolling_672", "slot", "dow", "is_weekend", "rain_mm", "rain_forecast", "temperature_c", "temperature_forecast", "event_intensity"]
 
 
 def make_data():
@@ -20,9 +20,10 @@ def make_data():
     df["dow"] = df.observed_at.dt.dayofweek
     df["is_weekend"] = (df.dow >= 5).astype(int)
     group = df.groupby("station_id", sort=False).demand
-    for lag in (1, 4, 96, 672):
+    for lag in (1, 2, 3, 4, 5, 8, 12, 16, 96, 192, 288, 672, 1344):
         df[f"lag_{lag}"] = group.shift(lag)
-    df["rolling_96"] = group.transform(lambda s: s.shift(1).rolling(96, min_periods=24).mean())
+    for window in (4, 12, 24, 96, 672):
+        df[f"rolling_{window}"] = group.transform(lambda s, w=window: s.shift(1).rolling(w, min_periods=max(2, w // 4)).mean())
     cutoff = df.observed_at.max() - pd.Timedelta(days=7)
     train = df[df.observed_at <= cutoff].dropna(subset=FEATURES)
     valid = df[df.observed_at > cutoff].dropna(subset=FEATURES)
