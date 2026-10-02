@@ -88,9 +88,9 @@ def main() -> None:
         raise RuntimeError("La API no devolvió suficientes datos para entrenar el modelo.")
 
     model = ExtraTreesRegressor(
-        n_estimators=400,
-        min_samples_leaf=2,
-        max_features=0.9,
+        n_estimators=800,
+        min_samples_leaf=1,
+        max_features=1.0,
         n_jobs=-1,
         random_state=42,
     )

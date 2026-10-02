@@ -250,7 +250,16 @@ def main() -> None:
         train_df = feature_df.copy()
         train_df["target"] = train_df.groupby("station_id", sort=False).demand.shift(-steps)
         train_df = train_df[(train_df.observed_at <= cutoff)].dropna(subset=cols + ["target"])
-        model = ExtraTreesRegressor(n_estimators=400, min_samples_leaf=2, max_features=0.9, n_jobs=-1, random_state=42 + steps)
+        # Mayor capacidad y menor sesgo para capturar patrones por estación,
+        # horizonte y franja temporal. La validación de selección se mantiene
+        # separada para no confundir accuracy offline con leaderboard.
+        model = ExtraTreesRegressor(
+            n_estimators=800,
+            min_samples_leaf=1,
+            max_features=1.0,
+            n_jobs=-1,
+            random_state=42 + steps,
+        )
         model.fit(train_df[cols], train_df.target)
         models[horizon] = model
         print(f"Horizonte {horizon} min: {len(train_df)} filas")
