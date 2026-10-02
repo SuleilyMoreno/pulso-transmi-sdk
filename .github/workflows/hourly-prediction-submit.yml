@@ -2,8 +2,11 @@ name: Predict and Submit Pulso TransMi
 
 on:
   schedule:
-    - cron: "*/15 * * * *" # revisa cada 15 min (UTC) para no perder ciclos abiertos
+    - cron: "*/5 * * * *" # revisa cada 5 min (UTC) para no perder ciclos abiertos
   workflow_dispatch:        # ejecución manual desde GitHub Actions
+  workflow_run:
+    workflows: ["Sync Pulso TransMi to Supabase"]
+    types: [completed]
 
 concurrency:
   group: pulso-prediction-submit
@@ -14,7 +17,7 @@ permissions:
 
 jobs:
   predict-and-submit:
-    if: ${{ true }}
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
