@@ -39,28 +39,34 @@ jobs:
         env:
           PULSO_API_KEY: ${{ secrets.PULSO_API_KEY }}
         run: |
-          status=$(curl -sS \
-            --connect-timeout 15 \
-            --max-time 45 \
-            --retry 5 \
-            --retry-delay 10 \
-            --retry-all-errors \
-            -o cycle.json \
-            -w "%{http_code}" \
-            -H "Authorization: Bearer $PULSO_API_KEY" \
-            "https://pulso-transmi.72-60-245-2.sslip.io/v1/forecast-cycles/current")
+          for attempt in $(seq 1 10); do
+            status=$(curl -sS \
+              --connect-timeout 15 \
+              --max-time 45 \
+              --retry 3 \
+              --retry-delay 5 \
+              --retry-all-errors \
+              -o cycle.json \
+              -w "%{http_code}" \
+              -H "Authorization: Bearer $PULSO_API_KEY" \
+              "https://pulso-transmi.72-60-245-2.sslip.io/v1/forecast-cycles/current")
 
-          if [ "$status" = "404" ] && grep -q "no_open_cycle" cycle.json; then
-            echo "open=false" >> "$GITHUB_OUTPUT"
-            echo "No hay ciclo abierto; no se enviará una predicción."
-          elif [ "$status" -ge 200 ] && [ "$status" -lt 300 ]; then
-            echo "open=true" >> "$GITHUB_OUTPUT"
-            echo "Ciclo abierto encontrado."
-          else
-            echo "La API respondió HTTP $status:"
-            cat cycle.json
-            exit 1
-          fi
+            if [ "$status" -ge 200 ] && [ "$status" -lt 300 ]; then
+              echo "open=true" >> "$GITHUB_OUTPUT"
+              echo "Ciclo abierto encontrado en el intento $attempt."
+              exit 0
+            elif [ "$status" != "404" ] || ! grep -q "no_open_cycle" cycle.json; then
+              echo "La API respondió HTTP $status:"
+              cat cycle.json
+              exit 1
+            fi
+
+            echo "Intento $attempt/10: todavía no hay ciclo abierto; esperando 30 segundos."
+            sleep 30
+          done
+
+          echo "open=false" >> "$GITHUB_OUTPUT"
+          echo "No apareció un ciclo abierto durante la ventana de espera."
 
       - name: Generate and submit predictions
         if: steps.cycle.outputs.open == 'true'
