@@ -2,8 +2,12 @@ name: Predict and Submit Pulso TransMi
 
 on:
   schedule:
-    - cron: "5 * * * *"   # cada hora a los :05 min (UTC) — 5 min después del sync
+    - cron: "*/15 * * * *" # revisa cada 15 min (UTC) para no perder ciclos abiertos
   workflow_dispatch:        # ejecución manual desde GitHub Actions
+
+concurrency:
+  group: pulso-prediction-submit
+  cancel-in-progress: false
 
 permissions:
   contents: read
