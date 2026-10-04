@@ -1,6 +1,7 @@
 """Pipeline reproducible: ingesta, entrena ExtraTrees con todos los datos y envía submission."""
 
 import os
+import json
 import subprocess
 import uuid
 from datetime import datetime, timezone
@@ -49,7 +50,17 @@ def stream_demand(row: dict) -> object:
     for name in ("demand", "measurement", "value", "demand_value", "observed_demand", "actual_demand"):
         if row.get(name) is not None:
             value = row[name]
-            return value.get("value") if isinstance(value, dict) else value
+            if isinstance(value, str) and value.startswith("{"):
+                try:
+                    value = json.loads(value)
+                except json.JSONDecodeError:
+                    return None
+            if isinstance(value, dict):
+                value = value.get("value")
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
     raise RuntimeError(f"El stream no contiene demanda; claves recibidas: {sorted(row)}")
 
 
@@ -60,6 +71,7 @@ def get_observations(client: httpx.Client) -> pd.DataFrame:
     rows = historical + [
         {"station_id": row["station_id"], "observed_at": row["observed_at"], "demand": stream_demand(row)}
         for row in released
+        if stream_demand(row) is not None
     ]
     return pd.DataFrame(rows).drop_duplicates(["station_id", "observed_at"], keep="last")
 

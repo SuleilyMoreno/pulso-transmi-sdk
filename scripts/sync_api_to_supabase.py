@@ -1,6 +1,7 @@
 """Sincroniza directamente la API Pulso TransMi con Supabase, sin CSV."""
 
 import os
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -109,14 +110,22 @@ def clean_stream_observations(rows: list[dict[str, Any]]) -> list[dict[str, Any]
             (row[name] for name in ("demand", "measurement", "value", "demand_value", "observed_demand", "actual_demand") if row.get(name) is not None),
             None,
         )
+        if isinstance(value, str) and value.startswith("{"):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                pass
         if isinstance(value, dict):
             value = value.get("value")
         if value is None:
-            raise RuntimeError(
-                "El stream no contiene un valor de demanda compatible; "
-                f"claves recibidas: {sorted(row)}"
-            )
-        cleaned.append({"station_id": row["station_id"], "observed_at": row["observed_at"], "demand": int(round(float(value)))})
+            continue
+        try:
+            demand = int(round(float(value)))
+        except (TypeError, ValueError):
+            continue
+        cleaned.append({"station_id": row["station_id"], "observed_at": row["observed_at"], "demand": demand})
+    if len(cleaned) < len(rows):
+        print(f"Filas del stream sin medición de demanda descartadas: {len(rows) - len(cleaned)}")
     return cleaned
 
 
