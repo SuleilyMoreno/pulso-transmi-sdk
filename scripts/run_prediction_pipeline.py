@@ -46,7 +46,7 @@ def normalize_station_id(value: object) -> str:
 
 def stream_demand(row: dict) -> object:
     """Adapta cambios de nombre del valor real liberado por el stream."""
-    for name in ("demand", "value", "demand_value", "observed_demand", "actual_demand"):
+    for name in ("demand", "measurement", "value", "demand_value", "observed_demand", "actual_demand"):
         if row.get(name) is not None:
             return row[name]
     raise RuntimeError(f"El stream no contiene demanda; claves recibidas: {sorted(row)}")

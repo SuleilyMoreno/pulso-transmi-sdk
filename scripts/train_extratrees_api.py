@@ -40,7 +40,7 @@ def get_observations(client: httpx.Client) -> pd.DataFrame:
     released = get_all(client, "/v1/stream/observations")
     rows = historical + [
         {"station_id": row["station_id"], "observed_at": row["observed_at"], "demand": next(
-            (row[name] for name in ("demand", "value", "demand_value", "observed_demand", "actual_demand") if row.get(name) is not None),
+            (row[name] for name in ("demand", "measurement", "value", "demand_value", "observed_demand", "actual_demand") if row.get(name) is not None),
             None,
         )}
         for row in released

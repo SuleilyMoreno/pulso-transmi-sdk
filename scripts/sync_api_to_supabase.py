@@ -106,7 +106,7 @@ def clean_stream_observations(rows: list[dict[str, Any]]) -> list[dict[str, Any]
     cleaned = []
     for row in rows:
         value = next(
-            (row[name] for name in ("demand", "value", "demand_value", "observed_demand", "actual_demand") if row.get(name) is not None),
+            (row[name] for name in ("demand", "measurement", "value", "demand_value", "observed_demand", "actual_demand") if row.get(name) is not None),
             None,
         )
         if value is None:
