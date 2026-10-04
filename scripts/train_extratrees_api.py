@@ -38,13 +38,12 @@ def get_all(client: httpx.Client, endpoint: str) -> list[dict]:
 def get_observations(client: httpx.Client) -> pd.DataFrame:
     historical = get_all(client, "/v1/observations")
     released = get_all(client, "/v1/stream/observations")
-    rows = historical + [
-        {"station_id": row["station_id"], "observed_at": row["observed_at"], "demand": next(
-            (row[name] for name in ("demand", "measurement", "value", "demand_value", "observed_demand", "actual_demand") if row.get(name) is not None),
-            None,
-        )}
-        for row in released
-    ]
+    rows = historical + []
+    for row in released:
+        value = next((row[name] for name in ("demand", "measurement", "value", "demand_value", "observed_demand", "actual_demand") if row.get(name) is not None), None)
+        if isinstance(value, dict):
+            value = value.get("value")
+        rows.append({"station_id": row["station_id"], "observed_at": row["observed_at"], "demand": value})
     if any(row["demand"] is None for row in rows):
         raise RuntimeError(f"El stream no contiene demanda; claves recibidas: {sorted(released[0])}")
     return pd.DataFrame(rows).drop_duplicates(["station_id", "observed_at"], keep="last")

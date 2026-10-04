@@ -48,7 +48,8 @@ def stream_demand(row: dict) -> object:
     """Adapta cambios de nombre del valor real liberado por el stream."""
     for name in ("demand", "measurement", "value", "demand_value", "observed_demand", "actual_demand"):
         if row.get(name) is not None:
-            return row[name]
+            value = row[name]
+            return value.get("value") if isinstance(value, dict) else value
     raise RuntimeError(f"El stream no contiene demanda; claves recibidas: {sorted(row)}")
 
 
