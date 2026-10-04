@@ -44,12 +44,20 @@ def normalize_station_id(value: object) -> str:
     return str(value).strip().zfill(5)
 
 
+def stream_demand(row: dict) -> object:
+    """Adapta cambios de nombre del valor real liberado por el stream."""
+    for name in ("demand", "value", "demand_value", "observed_demand", "actual_demand"):
+        if row.get(name) is not None:
+            return row[name]
+    raise RuntimeError(f"El stream no contiene demanda; claves recibidas: {sorted(row)}")
+
+
 def get_observations(client: httpx.Client) -> pd.DataFrame:
     """Combina historia y observaciones reales liberadas por el stream."""
     historical = get_all(client, "/v1/observations", {})
     released = get_all(client, "/v1/stream/observations", {})
     rows = historical + [
-        {key: row[key] for key in ("station_id", "observed_at", "demand")}
+        {"station_id": row["station_id"], "observed_at": row["observed_at"], "demand": stream_demand(row)}
         for row in released
     ]
     return pd.DataFrame(rows).drop_duplicates(["station_id", "observed_at"], keep="last")
