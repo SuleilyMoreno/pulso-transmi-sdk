@@ -52,13 +52,14 @@ button{cursor:pointer}
 .good{color:#65d6b2}
 .warn{color:#ffd166}
 
-/* Leaderboard */
+/* Leaderboard table */
 .empty{padding:20px;background:#0d1727;border-radius:9px;color:#91a4be}
-.lb-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #1a2d45;font-size:13px}
-.lb-row:last-child{border-bottom:none}
-.lb-row span{color:#91a4be}
-.lb-row b{color:#e8eef8}
-.lb-row.muted b{color:#5a7399}
+.lb-table{width:100%;border-collapse:collapse;font-size:13px}
+.lb-table th{text-align:left;color:#5a7399;font-weight:600;padding:6px 8px;border-bottom:1px solid #1e3450}
+.lb-table td{padding:7px 8px;border-bottom:1px solid #16253a;color:#c8d8e8}
+.lb-table tr:last-child td{border-bottom:none}
+.lb-table .lb-me td{background:#0d2518;color:#65d6b2;font-weight:600}
+.lb-table .lb-sep td{color:#5a7399;text-align:center;padding:4px;background:#0b1220}
 
 footer{margin-top:20px;font-size:12px;text-align:right}
 
