@@ -1,7 +1,8 @@
 let data, seriesChart, errorChart, performanceChart, map;
 const $ = id => document.getElementById(id);
 
-function pct(v)      { return v == null ? '—' : `${parseFloat(v).toFixed(1)}%`; }
+function pct(v)      { return v == null ? '—' : `${(v * 100).toFixed(1)}%`; }
+function rate(v)     { return v == null ? '—' : `${(v * 100).toFixed(1)}%`; }
 function dateText(v) {
   if (!v) return 'Sin datos';
   return new Date(v).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' });
@@ -36,184 +37,217 @@ async function load() {
 }
 
 function render() {
-  // ── Datos del estudiante (leaderboard_me) ──
-  const me = data.leaderboard_me || {};
-  const runs = data.runs || [];
-  const lb = (data.leaderboard && data.leaderboard.data) ? data.leaderboard.data : [];
-  const lbHistory = data.leaderboard_history || [];
-  const lastRun = runs[0] || {};
-  const generatedAt = data.generated_at;
+  const m = data.metrics || {};
 
   // ── KPI cards ──
-  $('accuracy').textContent = pct(me.accuracy);
-  $('accuracyDate').textContent = me.calculated_at
-    ? `Calculado ${timeAgo(me.calculated_at)}`
+  $('accuracy').textContent    = pct(m.accuracy_cumulative ?? m.accuracy);
+  $('last6Accuracy').textContent = pct(m.accuracy_last6);
+  $('last6Drift').textContent  = rate(m.drift_rate_last6);
+  $('model').textContent       = data.model_version || '—';
+
+  // Subtítulos con fechas
+  const dr = data.data_ranges || {};
+  $('accuracyDate').textContent = dr.metrics?.to
+    ? `Última eval: ${dateText(dr.metrics.to)}`
+    : (m.cycles_evaluated ? `${m.cycles_evaluated} ciclos evaluados` : '');
+  $('last6Date').textContent   = dr.metrics?.from
+    ? `Desde ${dateOnly(dr.metrics.from)}`
     : '';
-
-  $('last6Accuracy').textContent = me.rank ? `Puesto #${me.rank}` : '—';
-  $('last6Date').textContent = `de ${lb.length} estudiantes`;
-
-  $('last6Drift').textContent = me.raw_wape != null
-    ? `WAPE: ${parseFloat(me.raw_wape).toFixed(4)}`
-    : '—';
-  $('driftDate').textContent = me.coverage != null
-    ? `Cobertura: ${pct(me.coverage * 100)}`
+  $('driftDate').textContent   = m.wape != null
+    ? `WAPE: ${m.wape.toFixed(4)}`
     : '';
-
-  // Modelo activo = último run exitoso
-  const lastSucceeded = runs.find(r => r.status === 'succeeded');
-  $('model').textContent = lastSucceeded
-    ? (lastSucceeded.model_version || '—').split('-').slice(0,3).join('-')
-    : '—';
-  $('modelDate').textContent = lastSucceeded
-    ? `Entrenado ${timeAgo(lastSucceeded.started_at)}`
+  $('modelDate').textContent   = dr.predictions?.to
+    ? `Última pred: ${timeAgo(dr.predictions.to)}`
     : '';
 
   // ── Footer ──
-  $('updated').textContent = `Actualizado: ${generatedAt ? dateText(generatedAt) : new Date().toLocaleString('es-CO')}`;
+  $('updated').textContent = `Actualizado: ${new Date(data.updated_at).toLocaleString('es-CO')}`;
 
-  // ── Panel de fechas de los datos ──
-  const myHistory = lbHistory.filter(h => h.student === me.display_name);
-  const histDates = myHistory.map(h => h.measured_at).sort();
-  const runDates  = runs.map(r => r.started_at).sort();
+  // ── Panel de fechas de Supabase ──
+  renderDateRanges(dr);
 
-  const dateCards = [
-    {
-      icon: '🏆', label: 'Accuracy del estudiante',
-      from: histDates[0], to: histDates[histDates.length - 1],
-      count: myHistory.length, unit: 'registros históricos'
-    },
-    {
-      icon: '🤖', label: 'Entrenamientos ejecutados',
-      from: runDates[0], to: runDates[runDates.length - 1],
-      count: runs.length, unit: 'runs'
-    },
-    {
-      icon: '📊', label: 'Predicciones enviadas',
-      from: null, to: null,
-      count: data.prediction_count || 0, unit: 'predicciones totales'
-    },
-    {
-      icon: '📈', label: 'Leaderboard competencia',
-      from: lb[0]?.calculated_at || null,
-      to: lb[0]?.calculated_at || null,
-      count: data.leaderboard?.resolved_cycles || lb.length,
-      unit: 'ciclos resueltos'
-    },
-  ];
-
-  $('dateRanges').innerHTML = dateCards.map(c => `
-    <div class="date-card">
-      <div class="date-card-header">
-        <span class="date-icon">${c.icon}</span>
-        <span class="date-label">${c.label}</span>
-        <span class="date-count ${c.count > 0 ? 'good' : 'warn'}">${c.count} ${c.unit}</span>
-      </div>
-      <div class="date-range">
-        ${c.from
-          ? `<span class="date-from"><b>Desde:</b> ${dateText(c.from)}</span>
-             <span class="date-to"><b>Hasta:</b> ${dateText(c.to)}</span>`
-          : `<span class="date-from muted">Sin rango de fechas disponible</span>`}
-      </div>
-    </div>`
-  ).join('');
-
-  // ── Gráfico de rendimiento histórico (leaderboard_history del estudiante) ──
-  drawPerformance(myHistory);
-
-  // ── Gráfico de runs / errores ──
-  drawRuns(runs);
-
-  // ── Mapa (estaciones si existen, si no placeholder) ──
+  // ── Gráficos y mapa ──
+  const ids = Object.keys(data.series || {});
+  $('station').innerHTML = ids.map(x => `<option>${x}</option>`).join('');
+  $('station').onchange = drawSeries;
+  drawSeries();
+  drawErrors();
+  drawPerformance();
   drawMap();
 
-  // ── Drift / estado ──
-  const conn = data.connection || {};
+  // ── Drift status ──
+  const driftText = m.concept_drift == null ? 'Sin evaluación'
+    : (m.concept_drift ? '⚠ Detectado' : '✓ No detectado');
   $('drift').innerHTML = `
-    <span class="pill">API: <b class="${conn.pulso_key_configured ? 'good' : 'warn'}">${conn.pulso_key_configured ? 'Conectada ✓' : 'Sin clave'}</b></span>
-    <span class="pill">Supabase: <b class="${conn.supabase_configured ? 'good' : 'warn'}">${conn.supabase_configured ? 'Conectado ✓' : 'Sin configurar'}</b></span>
-    <span class="pill">Leaderboard: <b class="${conn.leaderboard_loaded ? 'good' : 'warn'}">${conn.leaderboard_loaded ? 'Cargado ✓' : 'No disponible'}</b></span>
-    <span class="pill">Predicciones evaluadas: <b>${data.evaluated_count ?? '—'}</b></span>
-    <span class="pill">Predicciones enviadas: <b>${data.prediction_count ?? '—'}</b></span>`;
+    <span class="pill">Ciclos evaluados: <b>${m.cycles_evaluated || 0}</b></span>
+    <span class="pill">Drift acumulado: <b class="${m.drift_rate_cumulative > 0 ? 'warn' : 'good'}">${rate(m.drift_rate_cumulative)}</b></span>
+    <span class="pill">Drift últimos 6: <b class="${m.drift_rate_last6 > 0 ? 'warn' : 'good'}">${rate(m.drift_rate_last6)}</b></span>
+    <span class="pill">Último: <b class="${m.concept_drift ? 'warn' : 'good'}">${driftText}</b></span>
+    <span class="pill">Reentrenado: <b>${m.retrained ? 'Sí' : 'No'}</b></span>
+    ${dr.metrics?.to ? `<span class="pill muted-pill">Última métrica: <b>${dateText(dr.metrics.to)}</b></span>` : ''}`;
 
-  // ── Leaderboard ──
-  drawLeaderboard(lb, me);
+  // ── Leaderboard / resumen ──
+  $('leaderboard').innerHTML = `
+    <div class="lb-row"><span>Accuracy acumulada</span><b>${pct(m.accuracy_cumulative ?? m.accuracy)}</b></div>
+    <div class="lb-row"><span>Accuracy últimos 6 ciclos</span><b>${pct(m.accuracy_last6)}</b></div>
+    <div class="lb-row"><span>WAPE</span><b>${m.wape != null ? m.wape.toFixed(4) : '—'}</b></div>
+    <div class="lb-row"><span>Predicciones evaluadas</span><b>${m.matched || 0}</b></div>
+    ${dr.predictions?.to ? `<div class="lb-row"><span>Última predicción enviada</span><b>${dateText(dr.predictions.to)}</b></div>` : ''}
+    ${dr.observations?.to ? `<div class="lb-row"><span>Última observación real</span><b>${dateText(dr.observations.to)}</b></div>` : ''}`;
 }
 
-function drawPerformance(myHistory) {
-  if (performanceChart) performanceChart.destroy();
-  // Ordenar cronológicamente
-  const rows = [...myHistory].sort((a, b) => new Date(a.measured_at) - new Date(b.measured_at));
+function renderDateRanges(dr) {
+  const defs = [
+    { key: 'observations', icon: '📊', label: 'Observaciones reales' },
+    { key: 'predictions',  icon: '🔮', label: 'Predicciones enviadas' },
+    { key: 'metrics',      icon: '📈', label: 'Métricas de drift' },
+    { key: 'ingestion',    icon: '🔄', label: 'Cargas a Supabase' },
+  ];
 
-  if (!$('performance')) return;
+  $('dateRanges').innerHTML = defs.map(({ key, icon, label }) => {
+    const r = dr[key] || {};
+    const hasData = r.from && r.to;
+    return `
+      <div class="date-card">
+        <div class="date-card-header">
+          <span class="date-icon">${icon}</span>
+          <span class="date-label">${label}</span>
+          <span class="date-count ${hasData ? 'good' : 'warn'}">${r.count || 0} registros</span>
+        </div>
+        <div class="date-range">
+          ${hasData
+            ? `<span class="date-from"><b>Desde:</b> ${dateText(r.from)}</span>
+               <span class="date-to"><b>Hasta:</b> ${dateText(r.to)}</span>`
+            : `<span class="date-from" style="color:#5a7399">Sin datos disponibles en Supabase</span>`}
+        </div>
+      </div>`;
+  }).join('');
+}
 
-  if (rows.length === 0) {
-    $('performance').closest('.panel').querySelector('canvas').style.display = 'none';
-    const noData = document.createElement('p');
-    noData.className = 'muted small';
-    noData.textContent = 'Sin historial de accuracy disponible aún.';
-    $('performance').closest('.panel').appendChild(noData);
-    return;
+function drawSeries() {
+  const rows = (data.series || {})[$('station').value] || [];
+  if (seriesChart) seriesChart.destroy();
+
+  // Rango de fechas sobre el gráfico
+  if ($('seriesRange')) {
+    $('seriesRange').textContent = rows.length
+      ? `📅 ${dateText(rows[0].observed_at)} → ${dateText(rows[rows.length - 1].observed_at)} · ${rows.length} observaciones`
+      : 'Sin observaciones para esta estación';
   }
 
-  performanceChart = new Chart($('performance'), {
+  seriesChart = new Chart($('series'), {
     type: 'line',
     data: {
-      labels: rows.map(x => dateText(x.measured_at)),
+      labels: rows.map(x => dateText(x.observed_at)),
       datasets: [{
-        label: 'Accuracy (%)',
-        data: rows.map(x => parseFloat(x.accuracy)),
+        label: 'Demanda',
+        data: rows.map(x => x.demand),
         borderColor: '#65d6b2',
         backgroundColor: '#65d6b233',
         fill: true,
-        tension: .3,
-        pointRadius: 4,
+        tension: .25,
+        pointRadius: rows.length > 50 ? 0 : 3,
       }]
     },
     options: {
       responsive: true,
-      plugins: {
-        legend: { labels: { color: '#e8eef8' } },
-        tooltip: { callbacks: { label: i => `Accuracy: ${i.raw.toFixed(2)}%` } }
-      },
+      plugins: { legend: { labels: { color: '#e8eef8' } } },
       scales: {
-        y: { min: 0, max: 100, title: { display: true, text: 'Accuracy (%)', color: '#8fa0b8' }, ticks: { color: '#8fa0b8' } },
+        y: { beginAtZero: true, ticks: { color: '#8fa0b8' } },
         x: { ticks: { color: '#8fa0b8', maxRotation: 30, maxTicksLimit: 8 } }
       }
     }
   });
-
-  // Actualizar rango de fechas bajo el gráfico
-  if (rows.length) {
-    const info = $('performance').closest('.panel').querySelector('.muted.small');
-    if (info) info.textContent = `📅 ${dateOnly(rows[0].measured_at)} → ${dateOnly(rows[rows.length-1].measured_at)} · ${rows.length} mediciones`;
-  }
 }
 
-function drawRuns(runs) {
-  if (errorChart) errorChart.destroy();
-  if (!$('errors')) return;
+function drawPerformance() {
+  if (performanceChart) performanceChart.destroy();
+  const rows = data.cycle_history || [];
 
-  const statusColors = { succeeded: '#65d6b2', failed: '#ff6b6b', running: '#ffd166' };
-  const counts = { succeeded: 0, failed: 0, running: 0 };
-  runs.forEach(r => { if (r.status in counts) counts[r.status]++; });
-
-  errorChart = new Chart($('errors'), {
-    type: 'doughnut',
+  performanceChart = new Chart($('performance'), {
     data: {
-      labels: ['Exitosos', 'Fallidos', 'En curso'],
-      datasets: [{
-        data: [counts.succeeded, counts.failed, counts.running],
-        backgroundColor: ['#65d6b2', '#ff6b6b', '#ffd166'],
-        borderColor: '#111c2e',
-        borderWidth: 2,
-      }]
+      labels: rows.map(x => x.evaluated_at ? dateText(x.evaluated_at) : x.cycle_id),
+      datasets: [
+        {
+          type: 'line', label: 'Accuracy',
+          data: rows.map(x => x.accuracy * 100),
+          borderColor: '#65d6b2', backgroundColor: '#65d6b233',
+          tension: .25, yAxisID: 'y', pointRadius: rows.length > 30 ? 0 : 4,
+        },
+        {
+          type: 'line', label: 'Umbral',
+          data: rows.map(x => (x.threshold || 0.8) * 100),
+          borderColor: '#ffd166', borderDash: [6, 5], pointRadius: 0, yAxisID: 'y',
+        },
+        {
+          type: 'bar', label: 'Drift detectado',
+          data: rows.map(x => x.drift_detected ? 100 : 0),
+          backgroundColor: '#ff8c69aa', yAxisID: 'drift',
+        }
+      ]
     },
     options: {
       responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        y: { min: 0, max: 100, title: { display: true, text: 'Accuracy (%)', color: '#8fa0b8' }, ticks: { color: '#8fa0b8' } },
+        x: { ticks: { color: '#8fa0b8', maxRotation: 30, maxTicksLimit: 8 } },
+        drift: { min: 0, max: 100, display: false }
+      },
       plugins: {
         legend: { labels: { color: '#e8eef8' } },
-        tooltip: { callbacks: { label: i => `${i.label}: ${i.raw} runs` } }
+        tooltip: {
+          callbacks: {
+            afterBody: (items) => {
+              const row = rows[items[0].dataIndex];
+              return [
+                `Ciclo: ${row.cycle_id}`,
+                `Fecha: ${row.evaluated_at ? dateText(row.evaluated_at) : '—'}`,
+                `Reentrenado: ${row.retrained ? 'Sí' : 'No'}`,
+                `Predicciones: ${row.matched_predictions}`,
+              ];
+            }
+          }
+        }
+      }
+    }
+  });
+
+  // Rango de fechas bajo el gráfico
+  const perfInfo = document.querySelector('#performance').closest('.panel').querySelector('.muted.small');
+  if (perfInfo && rows.length) {
+    const from = rows[0]?.evaluated_at;
+    const to   = rows[rows.length - 1]?.evaluated_at;
+    perfInfo.textContent = `📅 ${dateOnly(from)} → ${dateOnly(to)} · ${rows.length} ciclos · Accuracy y drift desde drift_metrics. El área sombreada marca el umbral de reentrenamiento.`;
+  }
+}
+
+function drawErrors() {
+  if (errorChart) errorChart.destroy();
+  const errors = data.errors || [];
+  errorChart = new Chart($('errors'), {
+    type: 'bar',
+    data: {
+      labels: ['≤ −100', '−100 a −25', '−25 a 25', '25 a 100', '> 100'],
+      datasets: [{
+        label: 'Errores',
+        data: [-100, -25, 0, 25, 100].map((_, i) =>
+          errors.filter(x => [
+            x <= -100,
+            x > -100 && x <= -25,
+            x > -25 && x <= 25,
+            x > 25 && x <= 100,
+            x > 100
+          ][i]).length
+        ),
+        backgroundColor: ['#ff6b6b', '#ffa94d', '#65d6b2', '#ffa94d', '#ff6b6b']
+      }]
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { ticks: { color: '#8fa0b8' } },
+        x: { ticks: { color: '#8fa0b8' } }
       }
     }
   });
@@ -223,115 +257,11 @@ function drawMap() {
   if (map) map.remove();
   map = L.map('map').setView([4.65, -74.1], 11);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
-
-  // Estaciones fijas TransMilenio (coordenadas conocidas)
-  const stations = [
-    { id: '02300', name: 'Portal Norte',      lat: 4.7564, lng: -74.0447 },
-    { id: '03000', name: 'Toberin',            lat: 4.7411, lng: -74.0503 },
-    { id: '05000', name: 'Calle 100',          lat: 4.6854, lng: -74.0476 },
-    { id: '05100', name: 'Calle 72',           lat: 4.6583, lng: -74.0579 },
-    { id: '06000', name: 'Calle 45',           lat: 4.6356, lng: -74.0659 },
-    { id: '06111', name: 'Av. El Dorado',      lat: 4.6280, lng: -74.0810 },
-    { id: '07105', name: 'NQS-Calle 30',       lat: 4.6214, lng: -74.0996 },
-    { id: '07107', name: 'NQS-Calle 30S',      lat: 4.6121, lng: -74.1011 },
-    { id: '07111', name: 'General Santander',  lat: 4.6063, lng: -74.1058 },
-    { id: '09000', name: 'Portal Sur',         lat: 4.5598, lng: -74.1460 },
-    { id: '09122', name: 'Alquería',           lat: 4.5875, lng: -74.1282 },
-    { id: '10009', name: 'Portal 80',          lat: 4.7047, lng: -74.1142 },
-  ];
-
-  stations.forEach(s =>
-    L.marker([s.lat, s.lng]).addTo(map)
-      .bindPopup(`<b>${s.name}</b><br>ID: ${s.id}`)
+  (data.stations || []).filter(s => s.latitude && s.longitude).forEach(s =>
+    L.marker([s.latitude, s.longitude]).addTo(map)
+      .bindPopup(`<b>${s.station_name || s.station_id}</b><br>ID: ${s.station_id}`)
   );
 }
 
-function drawLeaderboard(lb, me) {
-  const lbEl = $('leaderboard');
-  if (!lbEl) return;
-
-  if (!lb || lb.length === 0) {
-    lbEl.innerHTML = '<div class="empty">Sin datos de leaderboard.</div>';
-    return;
-  }
-
-  // Mostrar top 10 + tu posición
-  const top10 = lb.slice(0, 10);
-  const myRow = me.rank ? lb.find(r => r.display_name === me.display_name) : null;
-
-  let html = `<table class="lb-table">
-    <thead><tr><th>#</th><th>Estudiante</th><th>Accuracy</th><th>WAPE</th></tr></thead>
-    <tbody>`;
-
-  top10.forEach(r => {
-    const isMe = r.display_name === me.display_name;
-    html += `<tr class="${isMe ? 'lb-me' : ''}">
-      <td>${r.rank}</td>
-      <td>${r.display_name}</td>
-      <td>${pct(r.accuracy)}</td>
-      <td>${r.raw_wape != null ? parseFloat(r.raw_wape).toFixed(4) : '—'}</td>
-    </tr>`;
-  });
-
-  // Si yo estoy fuera del top 10, mostrar separador y mi fila
-  if (me.rank && me.rank > 10 && myRow) {
-    html += `<tr class="lb-sep"><td colspan="4">···</td></tr>
-    <tr class="lb-me">
-      <td>${me.rank}</td>
-      <td>${me.display_name} 👈</td>
-      <td>${pct(me.accuracy)}</td>
-      <td>${me.raw_wape != null ? parseFloat(me.raw_wape).toFixed(4) : '—'}</td>
-    </tr>`;
-  }
-
-  html += `</tbody></table>
-    <p class="muted small" style="margin-top:10px">
-      Ciclos resueltos: <b>${data.leaderboard?.resolved_cycles ?? '—'}</b> ·
-      Actualizado: ${me.calculated_at ? dateText(me.calculated_at) : '—'}
-    </p>`;
-
-  lbEl.innerHTML = html;
-}
-
-// Reemplazar el panel "series" con historial de runs ya que no hay series por estación
-function initStationPanel() {
-  const sel = $('station');
-  if (!sel) return;
-  // Ocultar select de estaciones (no viene en el nuevo API)
-  sel.style.display = 'none';
-  if ($('seriesRange')) $('seriesRange').textContent = 'Historial de accuracy acumulada del estudiante ↑';
-  if (!seriesChart && data) {
-    const me = data.leaderboard_me || {};
-    const lbHistory = data.leaderboard_history || [];
-    const myHistory = lbHistory.filter(h => h.student === me.display_name)
-      .sort((a, b) => new Date(a.measured_at) - new Date(b.measured_at));
-
-    if (seriesChart) seriesChart.destroy();
-    seriesChart = new Chart($('series'), {
-      type: 'line',
-      data: {
-        labels: myHistory.map(x => dateText(x.measured_at)),
-        datasets: [{
-          label: 'Accuracy histórica (%)',
-          data: myHistory.map(x => parseFloat(x.accuracy)),
-          borderColor: '#65d6b2',
-          backgroundColor: '#65d6b233',
-          fill: true,
-          tension: .3,
-          pointRadius: myHistory.length > 50 ? 0 : 4,
-        }]
-      },
-      options: {
-        responsive: true,
-        plugins: { legend: { labels: { color: '#e8eef8' } } },
-        scales: {
-          y: { min: 0, max: 100, ticks: { color: '#8fa0b8' } },
-          x: { ticks: { color: '#8fa0b8', maxRotation: 30, maxTicksLimit: 8 } }
-        }
-      }
-    });
-  }
-}
-
 $('refresh').onclick = load;
-load().then(() => initStationPanel());
+load();

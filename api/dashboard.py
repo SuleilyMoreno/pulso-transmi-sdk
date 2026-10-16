@@ -51,6 +51,39 @@ def handler(request):
         accuracy = max(0, 1 - sum(abs(x["error"]) for x in matched) / denom)
     model_version = next((p.get("model_version") for p in latest_predictions if p.get("model_version")), "No disponible")
     latest_metric = drift_metrics[0] if drift_metrics else None
+
+    def date_range(rows, field):
+        try:
+            values = sorted(str(row.get(field)) for row in rows if row.get(field))
+            return {"from": values[0], "to": values[-1], "count": len(values)} if values else {"from": None, "to": None, "count": 0}
+        except Exception:
+            return {"from": None, "to": None, "count": 0}
+
+    data_ranges = {
+        "observations": date_range(observations, "observed_at"),
+        "predictions":  date_range(predictions, "target_at"),
+        "metrics":      date_range(drift_metrics, "evaluated_at"),
+        "ingestion":    date_range(runs, "started_at"),
+    }
+
+    # Fallback: si observations vacío, reconstruir desde series agrupadas
+    if data_ranges["observations"]["count"] == 0 and obs_by_station:
+        all_obs_dates = sorted(
+            row["observed_at"]
+            for rows in obs_by_station.values()
+            for row in rows
+            if row.get("observed_at")
+        )
+        if all_obs_dates:
+            data_ranges["observations"] = {
+                "from": all_obs_dates[0],
+                "to": all_obs_dates[-1],
+                "count": len(all_obs_dates),
+            }
+    # Fallback predictions: usar created_at si target_at vacío
+    if data_ranges["predictions"]["count"] == 0 and latest_predictions:
+        data_ranges["predictions"] = date_range(latest_predictions, "created_at")
+
     scored_metrics = [m for m in drift_metrics if m.get("accuracy") is not None]
     metric_values = [float(m["accuracy"]) for m in scored_metrics]
     rolling_24h = sum(metric_values[:24]) / len(metric_values[:24]) if metric_values else None
@@ -77,6 +110,7 @@ def handler(request):
     )
     payload = {
         "updated_at": datetime.now(timezone.utc).isoformat(),
+        "data_ranges": data_ranges,
         "stations": stations,
         "series": {sid: rows[-96:] for sid, rows in obs_by_station.items()},
         "errors": errors[-500:],
