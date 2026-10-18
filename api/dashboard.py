@@ -13,6 +13,23 @@ def fetch(client, table, select="*", limit=1000, order=None):
     return response.json()
 
 
+def fetch_all(client, table, select="*", page_size=1000, order=None):
+    """Lee todas las páginas de PostgREST para no perder métricas históricas."""
+    rows = []
+    offset = 0
+    while True:
+        params = {"select": select, "limit": page_size, "offset": offset}
+        if order:
+            params["order"] = order
+        response = client.get(f"/rest/v1/{table}", params=params)
+        response.raise_for_status()
+        page = response.json()
+        rows.extend(page)
+        if len(page) < page_size:
+            return rows
+        offset += page_size
+
+
 def as_bool(value):
     """Normaliza booleanos provenientes de PostgREST o snapshots antiguos."""
     if isinstance(value, bool):
@@ -37,7 +54,7 @@ def handler(request):
             observations = fetch(client, "demand_observations", "station_id,observed_at,demand", 1000, "observed_at.desc")
             predictions = fetch(client, "prediction_estimates", "station_id,target_at,estimated_value,created_at,model_version,status", 1000, "created_at.desc")
             runs = fetch(client, "ingestion_runs", "ingestion_id,started_at,status,rows_loaded", 20, "started_at.desc")
-            drift_metrics = fetch(client, "drift_metrics", "metric_id,evaluated_at,prediction_batch_at,accuracy,wape,matched_predictions,threshold,drift_detected,retrained,status,details", 1000, "evaluated_at.desc")
+            drift_metrics = fetch_all(client, "drift_metrics", "metric_id,evaluated_at,prediction_batch_at,accuracy,wape,matched_predictions,threshold,drift_detected,retrained,status,details", 1000, "evaluated_at.desc")
     except Exception as exc:
         return {"statusCode": 502, "body": {"error": f"No se pudo consultar Supabase: {exc}"}}
 
