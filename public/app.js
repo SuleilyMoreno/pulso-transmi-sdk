@@ -163,6 +163,7 @@ function drawSeries() {
 function drawPerformance() {
   if (performanceChart) performanceChart.destroy();
   const rows = data.cycle_history || [];
+  const isTrue = value => value === true || value === 1 || ['true', '1', 'yes', 'si', 'sí'].includes(String(value).toLowerCase());
 
   performanceChart = new Chart($('performance'), {
     data: {
@@ -180,9 +181,10 @@ function drawPerformance() {
           borderColor: '#ffd166', borderDash: [6, 5], pointRadius: 0, yAxisID: 'y',
         },
         {
-          type: 'bar', label: 'Drift detectado',
-          data: rows.map(x => x.drift_detected ? 100 : 0),
-          backgroundColor: '#ff8c69aa', yAxisID: 'drift',
+          type: 'line', label: 'Drift detectado',
+          data: rows.map(x => isTrue(x.drift_detected) && x.accuracy != null ? x.accuracy * 100 : null),
+          borderColor: '#ff8c69', backgroundColor: '#ff8c69',
+          pointRadius: 5, pointHoverRadius: 7, showLine: false, yAxisID: 'y',
         }
       ]
     },
@@ -192,7 +194,6 @@ function drawPerformance() {
       scales: {
         y: { min: 0, max: 100, title: { display: true, text: 'Accuracy (%)', color: '#8fa0b8' }, ticks: { color: '#8fa0b8' } },
         x: { ticks: { color: '#8fa0b8', maxRotation: 30, maxTicksLimit: 8 } },
-        drift: { min: 0, max: 100, display: false }
       },
       plugins: {
         legend: { labels: { color: '#e8eef8' } },
@@ -203,7 +204,8 @@ function drawPerformance() {
               return [
                 `Ciclo: ${row.cycle_id}`,
                 `Fecha: ${row.evaluated_at ? dateText(row.evaluated_at) : '—'}`,
-                `Reentrenado: ${row.retrained ? 'Sí' : 'No'}`,
+                `Drift detectado: ${isTrue(row.drift_detected) ? 'Sí' : 'No'}`,
+                `Reentrenado: ${isTrue(row.retrained) ? 'Sí' : 'No'}`,
                 `Predicciones: ${row.matched_predictions}`,
               ];
             }

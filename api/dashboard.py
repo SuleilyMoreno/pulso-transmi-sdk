@@ -13,6 +13,15 @@ def fetch(client, table, select="*", limit=1000, order=None):
     return response.json()
 
 
+def as_bool(value):
+    """Normaliza booleanos provenientes de PostgREST o snapshots antiguos."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() in {"true", "t", "1", "yes", "si", "sí"}
+
+
 def handler(request):
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
@@ -90,8 +99,8 @@ def handler(request):
     last_six = scored_metrics[:6]
     accuracy_cumulative = sum(metric_values) / len(metric_values) if metric_values else None
     accuracy_last6 = sum(float(m["accuracy"]) for m in last_six) / len(last_six) if last_six else None
-    drift_rate_cumulative = sum(bool(m.get("drift_detected")) for m in scored_metrics) / len(scored_metrics) if scored_metrics else None
-    drift_rate_last6 = sum(bool(m.get("drift_detected")) for m in last_six) / len(last_six) if last_six else None
+    drift_rate_cumulative = sum(as_bool(m.get("drift_detected")) for m in scored_metrics) / len(scored_metrics) if scored_metrics else None
+    drift_rate_last6 = sum(as_bool(m.get("drift_detected")) for m in last_six) / len(last_six) if last_six else None
     cycle_history = []
     for metric in reversed(scored_metrics):
         details = metric.get("details") or {}
@@ -100,8 +109,8 @@ def handler(request):
             "evaluated_at": metric.get("evaluated_at"),
             "accuracy": float(metric["accuracy"]),
             "threshold": float(metric.get("threshold") or 0.8),
-            "drift_detected": bool(metric.get("drift_detected")),
-            "retrained": bool(metric.get("retrained")),
+            "drift_detected": as_bool(metric.get("drift_detected")),
+            "retrained": as_bool(metric.get("retrained")),
             "matched_predictions": metric.get("matched_predictions", 0),
         })
     last_run = runs[0] if runs else (
@@ -125,10 +134,10 @@ def handler(request):
             "drift_rate_last6": drift_rate_last6,
             "cycles_evaluated": len(scored_metrics),
             "data_drift": None,
-            "concept_drift": latest_metric.get("drift_detected") if latest_metric else None,
+            "concept_drift": as_bool(latest_metric.get("drift_detected")) if latest_metric else None,
             "wape": latest_metric.get("wape") if latest_metric else None,
             "status": latest_metric.get("status") if latest_metric else "no_metrics",
-            "retrained": latest_metric.get("retrained") if latest_metric else False,
+            "retrained": as_bool(latest_metric.get("retrained")) if latest_metric else False,
         },
         "drift_history": drift_metrics[:100],
         "cycle_history": cycle_history[-100:],
