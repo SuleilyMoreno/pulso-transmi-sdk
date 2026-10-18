@@ -157,7 +157,9 @@ def handler(request):
             "retrained": as_bool(latest_metric.get("retrained")) if latest_metric else False,
         },
         "drift_history": drift_metrics[:100],
-        "cycle_history": cycle_history[-100:],
+        # El frontend aplica el corte histórico solicitado; no recortar aquí a
+        # los últimos 100 porque eso elimina los ciclos anteriores al corte.
+        "cycle_history": cycle_history,
         "last_run": last_run,
         "model_version": model_version,
         "leaderboard": None,
