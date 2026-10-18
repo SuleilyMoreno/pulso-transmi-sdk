@@ -162,7 +162,14 @@ function drawSeries() {
 
 function drawPerformance() {
   if (performanceChart) performanceChart.destroy();
-  const rows = data.cycle_history || [];
+  // La vista histórica solicitada llega hasta el domingo 4 de octubre de 2026
+  // inclusive, usando el cierre del día en horario de Colombia (UTC-5).
+  const performanceEnd = new Date('2026-10-05T00:00:00-05:00');
+  const rows = (data.cycle_history || []).filter(row => {
+    if (!row.evaluated_at) return false;
+    const evaluatedAt = new Date(row.evaluated_at);
+    return !Number.isNaN(evaluatedAt.getTime()) && evaluatedAt < performanceEnd;
+  });
   const isTrue = value => value === true || value === 1 || ['true', '1', 'yes', 'si', 'sí'].includes(String(value).toLowerCase());
 
   performanceChart = new Chart($('performance'), {
